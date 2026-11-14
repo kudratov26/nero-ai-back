@@ -1,0 +1,747 @@
+# Nero AI backend: product and technical specification
+
+Version: 1.0 (v1)
+Status: proposed; implementation starts at Phase 0 in `docs/ROADMAP.md`.
+Frontend: `nero-ai-front` (Next.js). This document is the contract between the two repos.
+
+## 1. Purpose
+
+Turn the local-first Nero AI demo into a multi-user application with:
+
+- real accounts and server-side sessions
+- a server-authoritative model catalog and Credit ledger
+- real chat streaming through a model provider
+- persistent Chats, Generations, and Assets across devices
+- a shared Explore gallery with likes
+- a clean path to add real image and video providers later
+
+The frontend keeps its local mode as an offline demo. API mode is selected explicitly and
+uses this backend as the source of truth.
+
+## 2. Scope
+
+### In scope for v1
+
+- Email + password signup, login, logout, current-user endpoint
+- Opaque session cookies, session revocation, password change
+- Plans and a simulated plan-change flow
+- Credit accounts, append-only ledger, holds, commits, refunds
+- Server-driven model catalog
+- Chat CRUD, message persistence, SSE streaming from one real chat provider
+- Generation jobs for Image and Video using deterministic mock providers
+- Asset storage and authenticated delivery
+- Explore posts and likes, seeded from bundled assets
+- Per-user demo reset
+- OpenAPI contract and generated TypeScript types
+- Docker deployment with PostgreSQL and a worker
+
+### Explicit non-goals for v1
+
+- Real payments or invoices (plan changes are simulated and dev-only)
+- Email verification, password reset by email, MFA
+- User uploads, public publishing from a Generation, comments, follows
+- Real image or video generation (requires separate provider credentials)
+- Team accounts, roles beyond `user`/`admin`, sharing
+- Mobile apps and desktop shell
+- Horizontal scaling beyond one API instance and one worker
+
+## 3. Actors
+
+| Actor | Description |
+| --- | --- |
+| Anonymous | Can read Explore, plans, and the available model catalog |
+| User | Authenticated account; owns Chats, Generations, Assets, liked posts |
+| Admin | Internal only in v1; seeds catalog and gallery via CLI, no admin UI |
+| Provider | Coarena gateway for DeepSeek V4.1 Flash; mocked for Image/Video |
+| Worker | Background process that runs Generation jobs |
+
+## 4. Runtime architecture
+
+```text
+Browser (Next.js)
+   │  same-origin /api/* rewrite
+   ▼
+FastAPI  ──► PostgreSQL
+   │
+   ├──► Coarena / OpenAI-compatible chat provider (streaming)
+   ├──► mock image provider
+   ├──► mock video provider
+   └──► asset storage (local disk in dev, S3-compatible later)
+   ▲
+   └── Generation worker (polling Postgres queue)
+```
+
+The browser never talks to the provider directly. The API key never leaves the server.
+In production the frontend proxies `/api/*` so cookies are first-party and CORS is not
+needed. Direct cross-origin access is supported only for local development.
+
+## 5. Conventions
+
+- Base path: `/v1`
+- JSON field names: camelCase. Python names: snake_case, mapped with Pydantic aliases.
+- IDs: UUIDv7 strings, sortable by creation time.
+- Timestamps: ISO 8601 UTC with `Z`.
+- Credits: signed integers.
+- Pagination: opaque cursor, `limit` default 20, max 100.
+- Response envelope for lists: `{ "items": [...], "nextCursor": "..." | null }`
+- Errors: `application/problem+json` (RFC 9457 shape), see section 9.
+- Idempotency: `Idempotency-Key` header on message and generation creation.
+- Every response includes `X-Request-ID`; clients may send one, otherwise it is generated.
+- API version changes only for breaking contract changes. Additive fields are allowed.
+
+## 6. Authentication and accounts
+
+### 6.1 User model
+
+```text
+users
+  id                 uuid pk
+  email              text unique, normalized lowercase
+  display_name       text, 1..80
+  password_hash      text (Argon2id)
+  role               text: user | admin, default user
+  status             text: active | disabled
+  email_verified_at  timestamptz null
+  last_login_at      timestamptz null
+  created_at         timestamptz
+  updated_at         timestamptz
+```
+
+Email is unique, case-insensitive. Display name is required at signup, defaults to the
+email local part. Passwords are 10 to 128 characters; no composition rules. Reject
+passwords equal to the email and common-password entries if a small denylist is present.
+
+### 6.2 Sessions
+
+```text
+sessions
+  id            uuid pk
+  user_id       uuid fk users
+  token_hash    bytea unique  (SHA-256 of the opaque token)
+  user_agent    text null
+  ip            inet null
+  created_at    timestamptz
+  last_used_at  timestamptz
+  expires_at    timestamptz
+  revoked_at    timestamptz null
+```
+
+- Token: 32 random bytes, URL-safe encoded. Returned once in `Set-Cookie`.
+- Cookie: `nero_session=<token>; HttpOnly; SameSite=Lax; Path=/; Max-Age=2592000`;
+  `Secure` when `APP_ENV=production`.
+- TTL 30 days. Rotate the token on login and on password change.
+- Logout revokes the current session and clears the cookie.
+- Password change revokes all other sessions.
+- `last_used_at` updates at most once per 5 minutes to avoid a write per request.
+
+### 6.3 CSRF
+
+Cookies are first-party through the Next rewrite. For `POST`, `PUT`, `PATCH`, and
+`DELETE`, require an `Origin` header equal to `FRONTEND_ORIGIN` (or the API origin).
+Missing or mismatched origin returns `403 origin_not_allowed`. No double-submit token in
+v1 because the app is same-origin. If a cross-site deployment is introduced, add one and
+record an ADR.
+
+### 6.4 Auth endpoints
+
+```text
+POST   /v1/auth/signup      { email, password, displayName }  -> 201 MeResponse + cookie
+POST   /v1/auth/login       { email, password }               -> 200 MeResponse + cookie
+POST   /v1/auth/logout                                         -> 204
+GET    /v1/auth/me                                             -> 200 MeResponse
+PATCH  /v1/auth/me          { displayName }                    -> 200 User
+POST   /v1/auth/password    { currentPassword, newPassword }   -> 204, revokes other sessions
+GET    /v1/auth/sessions                                       -> 200 list of own sessions
+DELETE /v1/auth/sessions/{id}                                  -> 204
+```
+
+`MeResponse`:
+
+```json
+{
+  "user": {
+    "id": "0193...",
+    "email": "creator@example.com",
+    "displayName": "Creator",
+    "role": "user",
+    "createdAt": "2026-11-14T12:00:00Z"
+  },
+  "plan": { "id": "free", "name": "Free", "monthlyCredits": 50 },
+  "credits": {
+    "balance": 50,
+    "held": 0,
+    "available": 50,
+    "allowance": 50,
+    "periodStart": "2026-11-14T12:00:00Z",
+    "periodEnd": "2026-12-14T12:00:00Z"
+  }
+}
+```
+
+Signup grants the Free plan allowance in the same transaction. Login failures return a
+generic `401 invalid_credentials` regardless of whether the email exists.
+
+## 7. Plans and Credits
+
+### 7.1 Plans
+
+Seeded to match the frontend:
+
+| id | name | price | monthly Credits |
+| --- | --- | --- | --- |
+| free | Free | $0 | 50 |
+| pro | Pro | $19 | 1,000 |
+| studio | Studio | $49 | 3,000 |
+
+Fields: `id`, `name`, `priceCents`, `monthlyCredits`, `tagline`, `features[]`,
+`highlighted`, `sortOrder`.
+
+Plan changes are simulated (`BILLING_MODE=simulated`). The endpoint is disabled unless
+`ALLOW_SIMULATED_PLAN_CHANGES=true`. Applying a plan:
+
+1. locks the Credit account
+2. rejects the change with `409 conflict` while `held > 0`
+3. records a `plan_change` ledger entry
+4. replaces the allowance and refills available Credits to the new allowance
+5. starts a new 30-day period
+
+This is intentionally not a billing system. A production deployment must replace it with
+a payment provider before enabling paid plans.
+
+### 7.2 Credit account and ledger
+
+```text
+credit_accounts
+  user_id          uuid pk fk users
+  plan_id          text fk plans
+  balance          integer >= 0   -- total owned Credits
+  held             integer >= 0   -- reserved for in-flight work
+  allowance        integer >= 0   -- plan Credits for the current period
+  period_start     timestamptz
+  period_end       timestamptz
+  updated_at       timestamptz
+
+credit_ledger_entries
+  id               uuid pk
+  user_id          uuid fk users
+  kind             text: grant | reserve | commit | refund | plan_change | adjustment | reset
+  delta_balance    integer
+  delta_held       integer
+  balance_after    integer
+  held_after       integer
+  reason           text
+  ref_type         text null   -- chat_message | generation | plan | demo_reset
+  ref_id           uuid null
+  created_at       timestamptz
+```
+
+Invariants:
+
+- `available = balance - held`, never negative.
+- Ledger rows are immutable. No updates or deletes through the application.
+- Every reserve is eventually committed or refunded, including timeouts.
+- Holds expire: 15 minutes for chat, job duration + 10 minutes for generations. A sweeper
+  refunds expired holds and marks the related work failed.
+- Operations lock the account row (`SELECT ... FOR UPDATE`) and update the ledger in the
+  same transaction.
+
+Lifecycle:
+
+| Step | balance | held | ledger kind |
+| --- | --- | --- | --- |
+| Grant 50 | +50 | 0 | grant |
+| Reserve 2 | -2 | +2 | reserve |
+| Commit | 0 | -2 | commit |
+| Refund instead | +2 | -2 | refund |
+
+### 7.3 Credit endpoints
+
+```text
+GET  /v1/credits                  -> CreditsSummary
+GET  /v1/credits/ledger?cursor=   -> paginated ledger, own entries only
+POST /v1/account/plan             { planId } -> MeResponse (simulated only)
+POST /v1/demo/reset               -> 204, resets own workspace
+```
+
+`CreditsSummary` is the `credits` object from `MeResponse`. Model costs are always read
+from the server catalog; the client never sends a cost.
+
+Demo reset refunds any held Credits, deletes the user's Chats, Generations, Assets, and
+likes, then restores the current plan allowance with a `reset` ledger entry. It never
+touches the user row, password, or published Explore posts. It is idempotent and only
+affects the caller.
+
+## 8. Models
+
+```text
+models
+  id                 text pk        -- public slug, stable across providers
+  name               text
+  provider           text           -- display name, e.g. Coarena
+  provider_model_id  text           -- sent to the provider
+  modality           text: chat | image | video
+  description        text
+  badge              text null
+  credit_cost        integer        -- per message, image, or 5s of video
+  credit_cost_10s    integer null   -- video only
+  capabilities       jsonb          -- streaming, vision, maxOutputTokens...
+  context_window     integer null
+  available          boolean
+  sort_order         integer
+```
+
+Seed rules:
+
+- The real chat model comes from `AI_CHAT_MODEL` and is available only when the provider
+  is configured and a startup probe has succeeded.
+- Do not list GPT, Claude, Gemini, or other providers as available without an adapter.
+  Optional `comingSoon` entries may be shown disabled, but never selectable.
+- Image and Video models are available only when `GENERATION_MODE=mock` or a real adapter
+  is configured. A mock model's `provider` is `Demo` and the response says so.
+- Changing a price is a migration/seed change plus an OpenAPI-visible catalog update.
+
+```text
+GET /v1/models?modality=chat
+GET /v1/models/{id}
+GET /v1/plans
+```
+
+## 9. Errors
+
+Shape:
+
+```json
+{
+  "type": "https://nero.ai/problems/insufficient-credits",
+  "title": "Insufficient Credits",
+  "status": 409,
+  "code": "insufficient_credits",
+  "detail": "This run needs 15 Credits; 6 are available.",
+  "requestId": "0193..."
+}
+```
+
+`code` values:
+
+`invalid_request`, `unauthorized`, `forbidden`, `not_found`, `conflict`,
+`email_taken`, `invalid_credentials`, `weak_password`, `rate_limited`,
+`insufficient_credits`, `model_unavailable`, `provider_error`, `provider_timeout`,
+`generation_not_cancellable`, `idempotency_conflict`, `origin_not_allowed`,
+`payload_too_large`, `internal_error`.
+
+Mapping: 400 validation, 401 unauthenticated, 403 authorization/CSRF, 404 missing or not
+owned, 409 state conflicts, 422 semantic validation, 429 rate limit, 502/504 provider,
+500 unexpected. Never leak provider response bodies, SQL, or stack traces.
+
+## 10. Chats and messages
+
+### 10.1 Chat model
+
+```text
+chats
+  id          uuid pk
+  user_id     uuid fk
+  title       text, default "New chat"
+  model_id    text fk models
+  created_at  timestamptz
+  updated_at  timestamptz
+  deleted_at  timestamptz null
+
+messages
+  id           uuid pk
+  chat_id      uuid fk chats
+  user_id      uuid fk users
+  role         text: user | assistant | system
+  content      text
+  model_id     text null
+  status       text: complete | streaming | failed | cancelled
+  prompt_tokens      integer null
+  completion_tokens  integer null
+  error_code   text null
+  client_id    text null   -- client-generated message id
+  created_at   timestamptz
+  updated_at   timestamptz
+```
+
+Indexes: `(user_id, updated_at desc)` on chats where `deleted_at is null`;
+`(chat_id, created_at)` on messages; unique `(chat_id, client_id)` where not null.
+
+Titles: first user message, trimmed to 60 characters, unless the user set one.
+
+### 10.2 Endpoints
+
+```text
+GET    /v1/chats?cursor=                 -> paginated ChatSummary
+POST   /v1/chats          { title?, modelId } -> 201 Chat
+GET    /v1/chats/{id}                    -> Chat
+PATCH  /v1/chats/{id}     { title }      -> Chat
+DELETE /v1/chats/{id}                    -> 204 soft delete
+GET    /v1/chats/{id}/messages?before=   -> paginated Message list
+POST   /v1/chats/{id}/messages           -> text/event-stream, see 10.3
+```
+
+Ownership is checked for every route. A missing chat and someone else's chat both return
+404 to avoid resource enumeration.
+
+### 10.3 Streaming protocol
+
+Request:
+
+```json
+{ "content": "Give me three campaign angles.", "modelId": "deepseek-v4-1-flash", "clientId": "c-1" }
+```
+
+Headers: `Accept: text/event-stream`, `Idempotency-Key: <uuid>` optional.
+
+The server checks auth, chat ownership, model availability, and Credits **before**
+returning 200. Insufficient Credits is a normal 409 JSON response.
+
+Events, in order:
+
+```text
+event: message.started
+data: {"userMessageId":"...","assistantMessageId":"...","modelId":"..."}
+
+event: message.delta
+data: {"messageId":"...","delta":"Shoot"}
+
+event: message.completed
+data: {"messageId":"...","content":"...","usage":{"promptTokens":12,"completionTokens":80},
+       "credits":{"balance":48,"held":0,"available":48,"charged":2}}
+
+event: done
+data: {}
+```
+
+Failure:
+
+```text
+event: message.failed
+data: {"messageId":"...","code":"provider_timeout","detail":"The model did not respond.","refunded":true}
+```
+
+Rules:
+
+- Persist the user message and an assistant placeholder before calling the provider.
+- Reserve Credits before the provider call; commit on `message.completed`; refund on
+  failure or client disconnect before completion.
+- On disconnect, cancel the provider request and mark the assistant message `cancelled`.
+- Send a heartbeat comment (`: ping`) every 15 seconds.
+- No resume/replay in v1. If a client retries with the same `(chatId, clientId)`, return
+  `409 duplicate_message`; the client should refetch history.
+- Do not buffer the whole response; flush each delta.
+- Map provider errors to `provider_error`, `provider_timeout`, or `rate_limited`.
+
+## 11. Providers
+
+### 11.1 Port
+
+```python
+class ChatProvider(Protocol):
+    async def stream_chat(
+        self, *, messages: list[ProviderMessage], model: ProviderModel, params: ChatParams
+    ) -> AsyncIterator[ChatDelta]: ...
+
+class ImageProvider(Protocol):
+    async def generate(self, *, prompt: str, model: ProviderModel, params: dict) -> ProviderAssetBatch: ...
+
+class VideoProvider(Protocol):
+    async def submit(self, ...) -> ProviderJob: ...
+    async def poll(self, job_id: str) -> ProviderJob: ...
+```
+
+Ports live in `app/providers/base.py`. Domain code depends on ports, never on httpx or a
+vendor SDK.
+
+### 11.2 Coarena / DeepSeek V4.1 Flash
+
+- Treat the gateway as OpenAI-compatible until its documentation says otherwise:
+  `POST {AI_BASE_URL}/chat/completions` with `Authorization: Bearer <key>` and SSE.
+- Configuration: `AI_BASE_URL`, `AI_API_KEY`, `AI_CHAT_MODEL`. The public slug can differ
+  from the provider model id; store both on the model row.
+- Timeouts: connect 10s, read 120s, write 30s. Retry only before the first token, at most
+  twice, with jitter. Never retry 4xx.
+- A CLI validates the key without printing it:
+  `uv run python -m app.cli provider-check` sends a one-token request and prints the model,
+  status, and usage.
+- If the gateway is not OpenAI-compatible, add `app/providers/coarena.py` behind the same
+  port. Do not leak gateway details into services.
+- Prompts and completions are never logged. Log only model id, token counts, latency, and
+  outcome.
+
+### 11.3 Mock image and video
+
+`GENERATION_MODE=mock` is the default in development and CI.
+
+- Mock image: deterministic gradient PNG with the prompt excerpt and model name, sized by
+  aspect ratio; `count` variants differ by hue.
+- Mock video: 3-5 second bundled MP4 clip with metadata sidecar; no external calls.
+- Responses and assets clearly mark `provider: "mock"`.
+- Mock providers must satisfy the same ports as real providers so switching later does not
+  change the API.
+
+## 12. Generations and assets
+
+### 12.1 Models
+
+```text
+generations
+  id                uuid pk
+  user_id           uuid fk
+  modality          text: image | video
+  model_id          text fk models
+  prompt            text, 1..4000
+  params            jsonb       -- aspectRatio, count, style, duration...
+  status            text: queued | running | succeeded | failed | cancelled
+  progress          integer 0..100
+  cost              integer
+  provider          text
+  provider_job_id   text null
+  error_code        text null
+  attempts          integer default 0
+  max_attempts      integer default 3
+  locked_by         text null
+  locked_at         timestamptz null
+  created_at        timestamptz
+  started_at        timestamptz null
+  finished_at       timestamptz null
+
+assets
+  id            uuid pk
+  user_id       uuid fk
+  generation_id uuid fk generations null
+  post_id       uuid fk posts null
+  kind          text: image | video
+  storage_key   text unique
+  mime_type     text
+  size_bytes    bigint
+  width         integer null
+  height        integer null
+  duration_ms   integer null
+  created_at    timestamptz
+
+idempotency_keys
+  user_id     uuid
+  key         text
+  operation   text
+  request_hash text
+  resource_id uuid
+  created_at  timestamptz
+  unique (user_id, key)
+```
+
+### 12.2 Endpoints
+
+```text
+POST /v1/generations                 -> 202 Generation (reserves Credits)
+GET  /v1/generations?status=&cursor= -> paginated own Generations
+GET  /v1/generations/{id}            -> Generation
+POST /v1/generations/{id}/cancel     -> 202 Generation
+GET  /v1/assets/{id}                 -> binary, permission checked
+```
+
+`POST` body:
+
+```json
+{
+  "modality": "image",
+  "modelId": "flux-2-demo",
+  "prompt": "A sunlit reading room...",
+  "params": { "aspectRatio": "4:5", "count": 2, "style": "Cinematic" }
+}
+```
+
+Validation:
+
+- Prompt 1..4000 characters after trimming.
+- Params are validated per modality; unknown keys are ignored or rejected consistently.
+- Cost is computed from the model and params, never accepted from the client.
+- `Idempotency-Key` is required; replaying the same key and body returns the same
+  Generation. Same key with a different body returns `409 idempotency_conflict`.
+
+### 12.3 Worker
+
+- Entry point: `python -m app.worker`.
+- Claims jobs with `SELECT ... FOR UPDATE SKIP LOCKED` where status is `queued` or a
+  `running` job is stale (locked more than 5 minutes).
+- Updates progress at meaningful boundaries; persists assets on success.
+- On failure: retry up to `max_attempts`, then mark failed and refund.
+- On cancel while queued: mark cancelled and refund immediately. While running: request a
+  provider cancel if supported; otherwise finish and discard, then refund.
+- Worker concurrency is configurable (`WORKER_CONCURRENCY`, default 2).
+
+### 12.4 Asset delivery
+
+- Storage key: `assets/{userId}/{assetId}.{ext}`; local root is `STORAGE_DIR`.
+- Serve only through `GET /v1/assets/{id}`; never mount the storage directory statically.
+- Permission: owner, or the asset belongs to a published Explore post.
+- Set `Content-Type`, `Content-Length`, `ETag`, `Cache-Control: private, max-age=3600`
+  for owner assets; public gallery assets may be `public, max-age=86400`.
+- Support HTTP Range for video through the framework's file response.
+- Reject path traversal and unknown ids with 404.
+
+## 13. Explore
+
+```text
+posts
+  id            uuid pk
+  author_id     uuid fk users null   -- system author for seeds
+  asset_id      uuid fk assets
+  modality      text: chat | image | video
+  title         text
+  prompt        text
+  model_id      text fk models
+  params        jsonb
+  created_at    timestamptz
+  published     boolean default true
+
+post_likes
+  post_id     uuid fk posts
+  user_id     uuid fk users
+  created_at  timestamptz
+  primary key (post_id, user_id)
+```
+
+```text
+GET    /v1/explore/posts?modality=&modelId=&cursor=  -> public, likedByMe when signed in
+GET    /v1/explore/posts/{id}                         -> public
+POST   /v1/explore/posts/{id}/like                    -> 204, idempotent
+DELETE /v1/explore/posts/{id}/like                    -> 204, idempotent
+```
+
+Seed 16 posts with bundled assets (`scripts/seed.py`), matching the frontend demo's
+variety. Remix is frontend-only: the post payload contains the prompt, model, and params
+needed to prefill a workspace. Users cannot publish Generations in v1.
+
+## 14. Configuration
+
+Environment variables (validated at startup; fail fast on missing required values):
+
+| Variable | Required | Default | Notes |
+| --- | --- | --- | --- |
+| `APP_ENV` | yes | `development` | development, test, production |
+| `APP_SECRET` | prod | dev value | reserved for signing; do not reuse |
+| `DATABASE_URL` | yes | — | `postgresql+asyncpg://...` |
+| `FRONTEND_ORIGIN` | yes | `http://localhost:3000` | origin check and optional CORS |
+| `SESSION_COOKIE_NAME` | no | `nero_session` | |
+| `SESSION_TTL_DAYS` | no | `30` | |
+| `COOKIE_SECURE` | no | derived from env | must be true in production |
+| `AI_BASE_URL` | chat | — | Coarena gateway base URL, no trailing slash |
+| `AI_API_KEY` | chat | — | server only |
+| `AI_CHAT_MODEL` | chat | `deepseek-v4.1-flash` | confirm exact slug with the gateway |
+| `AI_REQUEST_TIMEOUT_SECONDS` | no | `120` | read timeout |
+| `GENERATION_MODE` | no | `mock` | mock or live |
+| `STORAGE_DIR` | no | `./storage` | local asset root |
+| `STORAGE_BACKEND` | no | `local` | local or s3 |
+| `ALLOW_SIMULATED_PLAN_CHANGES` | no | `true` in dev | false in production |
+| `RATE_LIMIT_BACKEND` | no | `memory` | memory or redis |
+| `LOG_LEVEL` | no | `info` | |
+| `SENTRY_DSN` | no | — | optional |
+
+`.env` is gitignored. `.env.example` contains placeholders only.
+
+## 15. Security and privacy
+
+- TLS terminates at the reverse proxy; cookies are `Secure` in production.
+- CORS: no wildcard. If direct cross-origin access is enabled, allow only
+  `FRONTEND_ORIGIN` with credentials.
+- Headers: `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`,
+  `X-Frame-Options: DENY`; HSTS in production.
+- Body limit 1 MiB; prompt limit 4000 characters.
+- Login rate limit: 5 attempts per 15 minutes per IP + email. Signup: 3 per hour per IP.
+  Chat: 30 messages per minute per user. Generations: 10 per minute per user.
+- Authorization: every query is scoped by user id. Public routes are explicitly listed.
+- Provider URLs come from configuration only (no SSRF surface).
+- Secrets are redacted from logs and error responses. Authorization headers are never
+  logged.
+- Audit events (login, logout, plan change, demo reset) are logged without payloads.
+- Data deletion: demo reset covers user data. Account deletion is post-v1 but the schema
+  supports soft-disable now.
+- Provider spend cap and per-user daily Credit cap are mandatory before production.
+
+## 16. Observability
+
+- Structured JSON logs with `requestId`, `userId`, `method`, `path`, `status`,
+  `durationMs`, `modelId`, `provider`, `outcome`.
+- Never log request bodies or model content.
+- `/health/live` returns 200 if the process is alive.
+- `/health/ready` checks database connectivity and migrations; it does not call the
+  provider.
+- Metrics (post-v1): request latency, stream duration, provider errors, Credit spend,
+  queue depth, job failure rate.
+- Alerts (post-v1): readiness failures, provider error rate, job backlog, negative-balance
+  invariant violation.
+
+## 17. Frontend integration
+
+- Add a server-only `API_URL` to the frontend and rewrite `/api/:path*` to
+  `${API_URL}/v1/:path*`. The browser uses relative `/api` URLs.
+- Cookies are set on the frontend origin by the proxy: no CORS, no token storage in JS.
+- Add `HttpServices` implementing the existing `lib/services` interfaces. Keep
+  `LocalServices` for `NEXT_PUBLIC_DATA_MODE=local`; API mode is `api`.
+- Streaming: use `fetch` with `ReadableStream`; `EventSource` cannot POST.
+- On `401`, clear client auth state and redirect to `/login`.
+- On `409 insufficient_credits`, link to `/pricing`; do not retry automatically.
+- Map backend `problem+json` codes to the existing toast copy.
+- Generate TypeScript types from `openapi.json` and fail CI when the committed schema
+  differs.
+- Delete or disable the local password/auth path in API mode; never run both sources of
+  truth at once.
+- Required flows: signup, login, logout, chat streaming, chat history, credits, image,
+  video, explore likes, demo reset, plan change.
+
+## 18. Testing strategy
+
+| Layer | Scope | Tools |
+| --- | --- | --- |
+| Unit | Credit math, password hashing, cursor encoding, SSE parsing | pytest |
+| Integration | Routers + services + PostgreSQL, fake providers | httpx ASGITransport, pytest-asyncio |
+| Provider | OpenAI-compatible adapter, retries, timeouts | respx |
+| Contract | OpenAPI snapshot, frontend generated types | schemathesis optional |
+| Concurrency | Two reserves cannot overspend; job locking | asyncio + Postgres |
+| Authorization | Every user resource across two accounts | parametrized tests |
+| Frontend e2e | Golden path against real backend + fake provider | Playwright (frontend repo) |
+
+CI requires PostgreSQL 16 as a service. No test may call a real provider. Tests use a
+clean migrated database and roll back per test.
+
+## 19. Deployment
+
+- Multi-stage `Dockerfile` (Python 3.12 slim), non-root user, `uv sync --frozen --no-dev`.
+- Compose services: `api`, `worker`, `db`; `db` volume; `storage` volume.
+- Run `alembic upgrade head` as a release step, not on every container start.
+- One API instance and one worker for v1. SQLite is not supported.
+- Production: managed PostgreSQL, S3-compatible storage, HTTPS, provider spend cap,
+  backups daily with 7-day retention, and log retention.
+- Migrations are backward-compatible for one release (expand/contract) before scaling to
+  multiple instances.
+
+## 20. v1 acceptance criteria
+
+```text
+[ ] signup, login, logout, me; cookie is HttpOnly and sessions are revocable
+[ ] every user resource is authorization-tested with two accounts
+[ ] Credit reserve/commit/refund and no-negative invariant tested under concurrency
+[ ] one real chat model streams end-to-end through Coarena with a key
+[ ] chat history persists across sessions and devices
+[ ] model catalog exposes only available models with server-side prices
+[ ] explore posts and likes work; public read, authenticated write
+[ ] image and video mock generations complete with stored assets and correct Credits
+[ ] demo reset restores the plan allowance and removes the user's work
+[ ] OpenAPI snapshot and generated frontend types are in sync
+[ ] frontend golden path runs against the backend in CI
+[ ] no secret, prompt, or cookie appears in logs
+[ ] ruff, mypy, pytest, and Docker build pass in CI
+```
+
+## 21. Open questions
+
+1. Confirm Coarena's exact base URL, auth scheme, and model slug. The OpenAI-compatible
+   adapter is the default assumption; adjust before Phase 3.
+2. Confirm whether Coarena supports usage/token counts in streamed responses. If not,
+   store null usage and rely on message counts for cost.
+3. Decide the production domain layout (`app.example.com` + `/api` proxy vs.
+   `api.example.com`). Same-origin proxy is strongly preferred.
+4. Image/video provider choice and budget. Until then, mock mode only.
+5. Whether email verification and password reset are required before any public launch.
+   They are post-v1 in this spec.

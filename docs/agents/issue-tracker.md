@@ -2,6 +2,18 @@
 
 Issues and specs for this repo live as GitHub issues. Use the `gh` CLI for all operations.
 
+If `gh` is not installed, use the GitHub REST API instead. Read a token without printing
+it:
+
+```bash
+TOKEN=$(printf 'protocol=https\nhost=github.com\n\n' | GIT_TERMINAL_PROMPT=0 git credential fill | sed -n 's/^password=//p')
+```
+
+Then call `https://api.github.com/repos/<owner>/<repo>/...` with
+`Authorization: Bearer $TOKEN`. Never echo the token, put it in a file, or include it in
+a commit. The same create/read/comment/label operations exist under `/issues` and
+`/pulls`.
+
 ## Conventions
 
 - **Create an issue**: `gh issue create --title "..." --body "..."`. Use a heredoc for multi-line bodies.
