@@ -10,17 +10,12 @@ import structlog
 
 from app.core.config import Settings
 from app.core.logging import REDACTED, configure_logging, redact_secrets
-from tests.conftest import TEST_DATABASE_URL
+from tests.support import make_settings
 
 
 @pytest.fixture
 def settings() -> Settings:
-    return Settings(
-        _env_file=None,
-        database_url=TEST_DATABASE_URL,
-        app_secret="test-secret",
-        log_level="info",
-    )
+    return make_settings()
 
 
 def process(event_dict: dict[str, Any]) -> dict[str, Any]:

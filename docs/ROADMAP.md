@@ -22,7 +22,7 @@ pytest, Alembic, and Docker build pass in CI.
   - `.env.example`, `.gitignore` (`.env`, `.venv`, caches, storage).
   - Acceptance: `uv run uvicorn app.main:app` serves `/health/live`; checks pass.
 
-- [ ] **B0.2 Error envelope, request IDs, and structured logs**
+- [x] **B0.2 Error envelope, request IDs, and structured logs**
   - RFC 9457 `problem+json` handler for validation, HTTP, and unhandled errors.
   - `X-Request-ID` in/out; bind `requestId` to logs.
   - Redact authorization, cookies, and provider keys.
@@ -311,7 +311,7 @@ B7.1 -> B7.2 -> B7.3 -> B7.4 (blocked on provider key)
 
 | Phase | Status |
 | --- | --- |
-| 0 Foundation | in progress (B0.1 done) |
+| 0 Foundation | in progress (B0.1–B0.2 done) |
 | 1 Accounts | not started |
 | 2 Credits | not started |
 | 3 Chat | not started |

@@ -6,16 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.core.config import DEV_APP_SECRET, AppEnv, Settings
-from tests.conftest import TEST_DATABASE_URL, TEST_SECRET
-
-
-def make_settings(**overrides: object) -> Settings:
-    values: dict[str, object] = {
-        "database_url": TEST_DATABASE_URL,
-        "app_secret": TEST_SECRET,
-    }
-    values.update(overrides)
-    return Settings(_env_file=None, **values)  # type: ignore[arg-type]
+from tests.support import make_settings
 
 
 def test_requires_database_url(monkeypatch: pytest.MonkeyPatch) -> None:

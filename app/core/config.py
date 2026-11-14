@@ -50,9 +50,7 @@ class Settings(BaseSettings):
     @field_validator("log_level", mode="before")
     @classmethod
     def _normalize_log_level(cls, value: object) -> object:
-        if isinstance(value, str):
-            return value.lower()
-        return value
+        return str(value).lower()
 
     @field_validator("session_ttl_days")
     @classmethod
