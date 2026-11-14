@@ -3,9 +3,9 @@
 Python backend for the Nero AI frontend. It owns real accounts, sessions, a
 server-authoritative Credit ledger, Chats, Generations, Assets, and provider access.
 
-**Status:** Phase 0 complete. B0.1–B0.4: settings, structured logging, RFC 9457
-errors with request IDs, PostgreSQL/SQLAlchemy/Alembic, `/health/live` +
-`/health/ready`, and CI. Phase 1 (accounts and sessions) is next.
+**Status:** Phase 0 complete. Phase 1 (accounts and sessions) is in progress:
+B1.1 provides the user, session, plan, and Credit schema plus Argon2id and opaque
+session-token primitives. Auth endpoints are B1.2.
 
 ## Read first
 
@@ -46,6 +46,9 @@ uv run alembic upgrade head             # apply migrations
 uv run alembic current                  # show the applied revision
 uv run alembic revision -m "add table"  # create a migration
 ```
+
+Migration `0002` seeds the Free, Pro, and Studio plan catalog. `app.db.seed.upsert_plans`
+refreshes the same rows idempotently, so it is safe to run on every deploy.
 
 Tests use a separate database: `nero_test` on the same server by default, overridable
 with `TEST_DATABASE_URL`. The suite recreates and migrates it once per session, so never

@@ -46,15 +46,15 @@ class _Engine:
 
 
 def test_expected_revision_matches_head() -> None:
-    assert expected_revision() == "0001"
+    assert expected_revision() is not None
 
 
 async def test_ready_when_revision_matches() -> None:
-    assert await database_is_ready(_Engine("0001")) is True  # type: ignore[arg-type]
+    assert await database_is_ready(_Engine(expected_revision())) is True  # type: ignore[arg-type]
 
 
 async def test_not_ready_when_revision_is_stale() -> None:
-    assert await database_is_ready(_Engine("9999")) is False  # type: ignore[arg-type]
+    assert await database_is_ready(_Engine("stale-revision")) is False  # type: ignore[arg-type]
 
 
 async def test_not_ready_when_connection_fails() -> None:

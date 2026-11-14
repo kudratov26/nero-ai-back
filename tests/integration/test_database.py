@@ -6,9 +6,8 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from app.api.health import expected_revision
 from app.db.session import create_session_factory, session_scope
-
-HEAD_REVISION = "0001"
 
 
 async def test_engine_connects(engine: AsyncEngine) -> None:
@@ -22,7 +21,7 @@ async def test_database_is_migrated_to_head(engine: AsyncEngine) -> None:
             await connection.execute(text("SELECT version_num FROM alembic_version"))
         ).scalar_one()
 
-    assert revision == HEAD_REVISION
+    assert revision == expected_revision()
 
 
 async def test_session_scope_commits(engine: AsyncEngine) -> None:
