@@ -15,7 +15,7 @@ Legend: `[ ]` open, `[x]` done. Update this file in the PR that closes a ticket.
 **Gate:** `/health/live` and `/health/ready` pass against a clean database; ruff, mypy,
 pytest, Alembic, and Docker build pass in CI.
 
-- [ ] **B0.1 Scaffold the Python project**
+- [x] **B0.1 Scaffold the Python project**
   - `pyproject.toml` with Python 3.12, uv, FastAPI, Pydantic, SQLAlchemy, asyncpg,
     Alembic, httpx, structlog, pytest, pytest-asyncio, respx, ruff, mypy.
   - Package: `app/main.py`, `app/core/config.py`, `app/core/logging.py`.
@@ -311,7 +311,7 @@ B7.1 -> B7.2 -> B7.3 -> B7.4 (blocked on provider key)
 
 | Phase | Status |
 | --- | --- |
-| 0 Foundation | not started |
+| 0 Foundation | in progress (B0.1 done) |
 | 1 Accounts | not started |
 | 2 Credits | not started |
 | 3 Chat | not started |

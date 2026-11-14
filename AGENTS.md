@@ -141,7 +141,7 @@ tests/            unit, integration, contract
 Paste this when starting a new backend session:
 
 ```text
-Repo: D:\programming\nero-ai-back
+Repo: /home/culpe/Programmin/nero-ai-back
 Read: AGENTS.md, docs/SPEC.md, docs/ROADMAP.md, GLOSSARY.md.
 Stack: FastAPI, PostgreSQL, SQLAlchemy async, Alembic, httpx, uv, ruff, mypy, pytest.
 Current task: <ticket from ROADMAP.md>.

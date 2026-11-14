@@ -3,7 +3,8 @@
 Python backend for the Nero AI frontend. It owns real accounts, sessions, a
 server-authoritative Credit ledger, Chats, Generations, Assets, and provider access.
 
-**Status:** specification phase. No application code yet.
+**Status:** Phase 0 in progress. B0.1 scaffold is in place: settings, structured
+logging, and `GET /health/live`. Database, error envelope, and CI land in B0.2–B0.4.
 
 ## Read first
 
@@ -21,15 +22,19 @@ server-authoritative Credit ledger, Chats, Generations, Assets, and provider acc
 - httpx, uv, ruff, mypy, pytest
 - Docker Compose for local PostgreSQL
 
-## Local development (after Phase 0)
+## Local development
 
 ```bash
 cp .env.example .env          # fill in real values locally; never commit .env
-docker compose up -d db
 uv sync
-uv run alembic upgrade head
-uv run python -m scripts.seed
+
+# Database steps arrive with B0.3:
+# docker compose up -d db
+# uv run alembic upgrade head
+# uv run python -m scripts.seed
+
 uv run uvicorn app.main:app --reload --port 8000
+curl http://localhost:8000/health/live
 ```
 
 Worker (separate terminal):
