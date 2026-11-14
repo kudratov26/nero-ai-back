@@ -34,7 +34,7 @@ pytest, Alembic, and Docker build pass in CI.
   - Initial empty migration; `alembic upgrade head` from a clean DB.
   - Acceptance: CI service Postgres runs migrations; test session rolls back.
 
-- [ ] **B0.4 CI and task commands**
+- [x] **B0.4 CI and task commands**
   - GitHub Actions: `uv sync --frozen`, ruff format check, ruff check, mypy, pytest,
     `alembic upgrade head`, Docker build.
   - Document commands in `README.md`.
@@ -311,7 +311,7 @@ B7.1 -> B7.2 -> B7.3 -> B7.4 (blocked on provider key)
 
 | Phase | Status |
 | --- | --- |
-| 0 Foundation | in progress (B0.1–B0.3 done) |
+| 0 Foundation | done |
 | 1 Accounts | not started |
 | 2 Credits | not started |
 | 3 Chat | not started |
