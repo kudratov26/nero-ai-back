@@ -35,5 +35,5 @@ async def test_openapi_exposes_only_documented_routes(
 ) -> None:
     schema = (await client.get("/openapi.json")).json()
 
-    assert set(schema["paths"]) == {"/health/live"}
+    assert set(schema["paths"]) == {"/health/live", "/health/ready"}
     assert schema["info"]["title"] == "Nero AI API"
