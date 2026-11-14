@@ -3,9 +3,9 @@
 Python backend for the Nero AI frontend. It owns real accounts, sessions, a
 server-authoritative Credit ledger, Chats, Generations, Assets, and provider access.
 
-**Status:** Phase 0 in progress. B0.1–B0.3 are in place: settings, structured
-logging, RFC 9457 errors with request IDs, PostgreSQL/SQLAlchemy/Alembic, and
-`/health/live` + `/health/ready`. CI lands in B0.4.
+**Status:** Phase 0 complete. B0.1–B0.4: settings, structured logging, RFC 9457
+errors with request IDs, PostgreSQL/SQLAlchemy/Alembic, `/health/live` +
+`/health/ready`, and CI. Phase 1 (accounts and sessions) is next.
 
 ## Read first
 
@@ -16,7 +16,7 @@ logging, RFC 9457 errors with request IDs, PostgreSQL/SQLAlchemy/Alembic, and
 - [`GLOSSARY.md`](GLOSSARY.md): domain vocabulary.
 - [`docs/adr/`](docs/adr/): decisions.
 
-## Planned stack
+## Stack
 
 - Python 3.12, FastAPI, Pydantic v2
 - PostgreSQL 16, SQLAlchemy 2 async, asyncpg, Alembic
@@ -36,19 +36,37 @@ curl http://localhost:8000/health/live
 curl http://localhost:8000/health/ready
 ```
 
-Worker (separate terminal):
+## Database
+
+Migrations live in `alembic/versions/`. The URL comes from `DATABASE_URL`; never put a
+real URL in `alembic.ini`.
 
 ```bash
-uv run python -m app.worker
+uv run alembic upgrade head             # apply migrations
+uv run alembic current                  # show the applied revision
+uv run alembic revision -m "add table"  # create a migration
 ```
 
-Checks:
+Tests use a separate database: `nero_test` on the same server by default, overridable
+with `TEST_DATABASE_URL`. The suite recreates and migrates it once per session, so never
+point it at a database you care about.
+
+## Checks
+
+CI runs these on every pull request; run them locally before opening one.
 
 ```bash
 uv run ruff format --check .
 uv run ruff check .
 uv run mypy app
-uv run pytest
+uv run pytest --cov=app --cov-report=term-missing --cov-fail-under=75
+docker build -t nero-ai-back:dev .
+```
+
+Worker (from Phase 5):
+
+```bash
+uv run python -m app.worker
 ```
 
 Provider probe (after Phase 3):
