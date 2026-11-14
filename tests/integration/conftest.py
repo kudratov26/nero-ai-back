@@ -12,9 +12,10 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from sqlalchemy.engine import make_url
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
 
+from app.db.session import create_session_factory
 from tests.support import TEST_DATABASE_URL
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -59,3 +60,17 @@ async def engine(migrated_database: str) -> AsyncIterator[AsyncEngine]:
         yield engine
     finally:
         await engine.dispose()
+
+
+@pytest.fixture
+async def db_session(engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
+    """Session whose transaction is rolled back after the test.
+
+    Tests can flush freely (including expected constraint violations) without
+    leaving rows behind. Nothing is committed.
+    """
+    async with create_session_factory(engine)() as session:
+        try:
+            yield session
+        finally:
+            await session.rollback()

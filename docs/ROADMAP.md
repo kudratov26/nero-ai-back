@@ -50,7 +50,7 @@ provisioning path.
 **Gate:** two accounts can sign up and log in; unauthorized access fails; session
 revocation and origin checks are tested.
 
-- [ ] **B1.1 Users, sessions, plans, and account schema**
+- [x] **B1.1 Users, sessions, plans, and account schema**
   - `users`, `sessions`, `plans`, `credit_accounts`, `credit_ledger_entries` tables and
     migration; seed Free, Pro, and Studio.
   - Argon2id password hashing (`pwdlib[argon2]` or `argon2-cffi`).
@@ -312,7 +312,7 @@ B7.1 -> B7.2 -> B7.3 -> B7.4 (blocked on provider key)
 | Phase | Status |
 | --- | --- |
 | 0 Foundation | done |
-| 1 Accounts | not started |
+| 1 Accounts | in progress (B1.1 done) |
 | 2 Credits | not started |
 | 3 Chat | not started |
 | 4 Explore | not started |
