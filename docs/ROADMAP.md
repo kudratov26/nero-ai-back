@@ -28,7 +28,7 @@ pytest, Alembic, and Docker build pass in CI.
   - Redact authorization, cookies, and provider keys.
   - Acceptance: tests assert shape and request id propagation; no payload logging.
 
-- [ ] **B0.3 PostgreSQL, SQLAlchemy, and Alembic**
+- [x] **B0.3 PostgreSQL, SQLAlchemy, and Alembic**
   - Async engine/session, `Base`, naming conventions, UUIDv7 helper.
   - `docker-compose.yml` with PostgreSQL 16 and a healthcheck.
   - Initial empty migration; `alembic upgrade head` from a clean DB.
@@ -311,7 +311,7 @@ B7.1 -> B7.2 -> B7.3 -> B7.4 (blocked on provider key)
 
 | Phase | Status |
 | --- | --- |
-| 0 Foundation | in progress (B0.1–B0.2 done) |
+| 0 Foundation | in progress (B0.1–B0.3 done) |
 | 1 Accounts | not started |
 | 2 Credits | not started |
 | 3 Chat | not started |
