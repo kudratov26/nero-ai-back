@@ -283,6 +283,7 @@ async def test_ledger_constraints(db_session: AsyncSession, overrides: dict[str,
 
 async def test_deleting_a_user_cascades_owned_rows(db_session: AsyncSession) -> None:
     user = await add_user(db_session)
+    user_id = user.id
     db_session.add_all(
         [
             make_account(user.id),
@@ -296,5 +297,7 @@ async def test_deleting_a_user_cascades_owned_rows(db_session: AsyncSession) -> 
     await db_session.flush()
 
     for model in (CreditAccount, CreditLedgerEntry, UserSession):
-        count = await db_session.scalar(select(func.count()).select_from(model))
+        count = await db_session.scalar(
+            select(func.count()).select_from(model).where(model.user_id == user_id)
+        )
         assert count == 0, model.__tablename__
