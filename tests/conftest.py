@@ -1,16 +1,15 @@
 """Test environment defaults.
 
-Set before any `app` import so the cached `Settings` can be constructed without a
-local `.env`. Tests that need different values build `Settings` explicitly with
-`_env_file=None`.
+Environment variables are set before any `app` import so the cached `Settings` can
+be constructed without a local `.env`. Tests that need different values use
+`tests.support.make_settings`.
 """
 
 from __future__ import annotations
 
 import os
 
-TEST_DATABASE_URL = "postgresql+asyncpg://nero:nero@localhost:5432/nero_test"
-TEST_SECRET = "test-secret-not-for-production"
+from tests.support import TEST_DATABASE_URL, TEST_SECRET
 
 os.environ.setdefault("APP_ENV", "test")
 os.environ.setdefault("APP_SECRET", TEST_SECRET)

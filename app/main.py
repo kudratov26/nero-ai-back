@@ -5,6 +5,8 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from app.api.health import router as health_router
+from app.api.problems import register_exception_handlers
+from app.api.request_context import RequestContextMiddleware
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging
 
@@ -23,6 +25,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         openapi_url="/openapi.json",
     )
     app.state.settings = resolved
+    app.add_middleware(RequestContextMiddleware)
+    register_exception_handlers(app)
     app.include_router(health_router)
     return app
 

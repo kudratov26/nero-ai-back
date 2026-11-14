@@ -2,32 +2,17 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-
 import httpx
 import pytest
-from fastapi import FastAPI
 
-from app.core.config import Settings
 from app.main import create_app
-from tests.conftest import TEST_DATABASE_URL
+from tests.support import asgi_client, make_settings
 
 
 @pytest.fixture
-def app() -> FastAPI:
-    return create_app(
-        Settings(
-            _env_file=None,
-            database_url=TEST_DATABASE_URL,
-            app_secret="test-secret",
-        )
-    )
-
-
-@pytest.fixture
-async def client(app: FastAPI) -> AsyncIterator[httpx.AsyncClient]:
-    transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as http:
+async def client() -> httpx.AsyncClient:
+    app = create_app(make_settings())
+    async with asgi_client(app) as http:
         yield http
 
 
@@ -37,6 +22,12 @@ async def test_live_returns_ok(client: httpx.AsyncClient) -> None:
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
     assert response.headers["content-type"] == "application/json"
+
+
+async def test_live_sets_request_id(client: httpx.AsyncClient) -> None:
+    response = await client.get("/health/live")
+
+    assert len(response.headers["x-request-id"]) == 32
 
 
 async def test_openapi_exposes_only_documented_routes(
