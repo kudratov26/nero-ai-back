@@ -11,9 +11,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEV_APP_SECRET = "change-me-in-production"
 DEFAULT_MAX_BODY_BYTES = 1_048_576
+DEFAULT_CHAT_MODEL = "deepseek-v4.1-flash"
 
 LogLevel = Literal["debug", "info", "warning", "error", "critical"]
 RateLimitBackend = Literal["memory", "redis"]
+GenerationMode = Literal["mock", "live"]
 
 
 class AppEnv(StrEnum):
@@ -52,10 +54,39 @@ class Settings(BaseSettings):
     rate_limit_backend: RateLimitBackend = "memory"
     max_request_body_bytes: int = DEFAULT_MAX_BODY_BYTES
 
+    # Model provider and generation mode. `GENERATION_MODE=live` without an image
+    # or video adapter must not advertise those models; the catalog seed enforces it.
+    ai_base_url: str | None = None
+    ai_api_key: str | None = None
+    ai_chat_model: str = DEFAULT_CHAT_MODEL
+    generation_mode: GenerationMode = "mock"
+
     @field_validator("log_level", mode="before")
     @classmethod
     def _normalize_log_level(cls, value: object) -> object:
         return str(value).lower()
+
+    @field_validator("ai_base_url", "ai_api_key", mode="before")
+    @classmethod
+    def _blank_to_none(cls, value: object) -> object:
+        """`.env.example` ships empty placeholders; treat them as unset."""
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+    @field_validator("ai_base_url")
+    @classmethod
+    def _strip_base_url_slash(cls, value: str | None) -> str | None:
+        return None if value is None else value.rstrip("/")
+
+    @field_validator("ai_chat_model")
+    @classmethod
+    def _require_chat_model(cls, value: str) -> str:
+        trimmed = value.strip()
+        if not trimmed:
+            raise ValueError("AI_CHAT_MODEL must not be blank")
+        return trimmed
 
     @field_validator("session_ttl_days")
     @classmethod
@@ -99,6 +130,15 @@ class Settings(BaseSettings):
         if self.cookie_secure is not None:
             return self.cookie_secure
         return self.is_production
+
+    @property
+    def chat_provider_configured(self) -> bool:
+        """Whether the chat gateway is configured well enough to be advertised.
+
+        B2.1 treats a base URL plus an API key as "configured". B3.1 adds a startup
+        probe and may tighten this to a verified round trip.
+        """
+        return bool(self.ai_base_url and self.ai_api_key)
 
 
 @lru_cache(maxsize=1)

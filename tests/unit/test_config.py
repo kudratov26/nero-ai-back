@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from app.core.config import DEV_APP_SECRET, AppEnv, Settings
+from app.core.config import DEFAULT_CHAT_MODEL, DEV_APP_SECRET, AppEnv, Settings
 from tests.support import make_settings
 
 
@@ -80,3 +80,66 @@ def test_memory_rate_limit_backend_is_the_default() -> None:
 def test_redis_rate_limit_backend_is_not_supported_yet() -> None:
     with pytest.raises(ValidationError):
         make_settings(rate_limit_backend="redis")
+
+
+def test_generation_mode_defaults_to_mock() -> None:
+    assert make_settings().generation_mode == "mock"
+
+
+def test_invalid_generation_mode_rejected() -> None:
+    with pytest.raises(ValidationError):
+        make_settings(generation_mode="shadow")
+
+
+def test_chat_model_defaults_to_deepseek_flash() -> None:
+    assert make_settings().ai_chat_model == DEFAULT_CHAT_MODEL
+
+
+def test_chat_model_must_not_be_blank() -> None:
+    with pytest.raises(ValidationError):
+        make_settings(ai_chat_model="  ")
+
+
+def test_chat_model_is_trimmed() -> None:
+    assert make_settings(ai_chat_model="  custom-chat  ").ai_chat_model == "custom-chat"
+
+
+@pytest.mark.parametrize(
+    ("base_url", "api_key"),
+    [
+        (None, None),
+        ("https://gateway.example.test", None),
+        (None, "a-key"),
+        ("", "a-key"),
+        ("https://gateway.example.test", ""),
+        ("   ", "a-key"),
+    ],
+)
+def test_chat_provider_is_unconfigured_until_both_values_are_set(
+    base_url: str | None, api_key: str | None
+) -> None:
+    settings = make_settings(ai_base_url=base_url, ai_api_key=api_key)
+
+    assert settings.chat_provider_configured is False
+
+
+def test_chat_provider_is_configured_with_a_base_url_and_key() -> None:
+    settings = make_settings(
+        ai_base_url="https://gateway.example.test/v1",
+        ai_api_key="a-key",
+    )
+
+    assert settings.chat_provider_configured is True
+
+
+def test_base_url_trailing_slash_is_removed() -> None:
+    settings = make_settings(ai_base_url="https://gateway.example.test/v1/")
+
+    assert settings.ai_base_url == "https://gateway.example.test/v1"
+
+
+def test_empty_env_placeholders_become_none() -> None:
+    settings = make_settings(ai_base_url="", ai_api_key="")
+
+    assert settings.ai_base_url is None
+    assert settings.ai_api_key is None

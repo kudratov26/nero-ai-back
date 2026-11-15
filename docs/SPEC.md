@@ -317,20 +317,52 @@ models
   sort_order         integer
 ```
 
-Seed rules:
+`provider_model_id` is internal plumbing and is never returned to a client.
 
-- The real chat model comes from `AI_CHAT_MODEL` and is available only when the provider
-  is configured and a startup probe has succeeded.
+Seed rules (written by `python -m app.cli seed`, not by a migration, because
+availability depends on configuration):
+
+- The chat model is `AI_CHAT_MODEL` and is available only when `AI_BASE_URL` and
+  `AI_API_KEY` are both set. Phase B3.1 tightens this to a successful startup probe.
 - Do not list GPT, Claude, Gemini, or other providers as available without an adapter.
-  Optional `comingSoon` entries may be shown disabled, but never selectable.
-- Image and Video models are available only when `GENERATION_MODE=mock` or a real adapter
-  is configured. A mock model's `provider` is `Demo` and the response says so.
-- Changing a price is a migration/seed change plus an OpenAPI-visible catalog update.
+- The Image and Video models are the deterministic `Demo` providers. They are available
+  only when `GENERATION_MODE=mock`; the response carries `provider: "Demo"` so no caller
+  can mistake them for real output.
+- Re-seeding refreshes rows and deletes models that are no longer configured, so a
+  changed `AI_CHAT_MODEL` never leaves the old slug advertised.
+- Changing a price is a seed change plus an OpenAPI-visible catalog update.
+
+Seeded credits: chat message `1`, image `5`, video `15` for 5s and `30` for 10s.
+
+### 8.1 Catalog reads
 
 ```text
-GET /v1/models?modality=chat
-GET /v1/models/{id}
-GET /v1/plans
+GET /v1/models?modality=chat|image|video   -> [Model]
+GET /v1/models/{id}                        -> Model | 404 not_found
+GET /v1/plans                              -> [Plan]
+```
+
+All three are public (no session). Only models with `available = true` are ever listed,
+and `GET /v1/models/{id}` returns `404 not_found` for an unknown *or* unavailable model —
+an unavailable model is indistinguishable from a missing one so the catalog can never
+advertise work the server cannot do. An unknown `modality` is `400 invalid_request`.
+
+`Model` JSON (camelCase; `available` and `providerModelId` are omitted):
+
+```json
+{
+  "id": "deepseek-v4.1-flash",
+  "name": "DeepSeek V4.1 Flash",
+  "provider": "Coarena",
+  "modality": "chat",
+  "description": "Flagship assistant for reasoning, writing, and code.",
+  "badge": "New",
+  "creditCost": 1,
+  "creditCost10s": null,
+  "capabilities": { "streaming": true, "vision": false, "maxOutputTokens": 8192 },
+  "contextWindow": 128000,
+  "sortOrder": 0
+}
 ```
 
 ## 9. Errors
@@ -572,7 +604,7 @@ GET  /v1/assets/{id}                 -> binary, permission checked
 ```json
 {
   "modality": "image",
-  "modelId": "flux-2-demo",
+  "modelId": "image-demo",
   "prompt": "A sunlit reading room...",
   "params": { "aspectRatio": "4:5", "count": 2, "style": "Cinematic" }
 }
@@ -742,6 +774,9 @@ clean migrated database and roll back per test.
 - Multi-stage `Dockerfile` (Python 3.12 slim), non-root user, `uv sync --frozen --no-dev`.
 - Compose services: `api`, `worker`, `db`; `db` volume; `storage` volume.
 - Run `alembic upgrade head` as a release step, not on every container start.
+- Run `python -m app.cli seed` after migrations. It is idempotent and refreshes the plan
+  and model catalogs; `available` is derived from the environment, so this is where a
+  missing provider key keeps a model out of the catalog.
 - One API instance and one worker for v1. SQLite is not supported.
 - Production: managed PostgreSQL, S3-compatible storage, HTTPS, provider spend cap,
   backups daily with 7-day retention, and log retention.

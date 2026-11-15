@@ -88,12 +88,15 @@ revocation and origin checks are tested.
 **Gate:** reserve/commit/refund tests pass, including concurrent reserves; the ledger is
 append-only and no operation can make available Credits negative.
 
-- [ ] **B2.1 Model catalog**
-  - `models` table, migration, and seed script; plans are already seeded in Phase 1.
-  - `GET /v1/plans`, `GET /v1/models`, `GET /v1/models/{id}`.
-  - Seed Free/Pro/Studio and the available chat model; mock image/video models only when
-    `GENERATION_MODE=mock`.
-  - Acceptance: only available models are returned; prices match the seed; public read.
+- [x] **B2.1 Model catalog**
+  - `models` table, migration (`0003`), and `python -m app.cli seed`; plans were already
+    seeded in Phase 1.
+  - `GET /v1/plans`, `GET /v1/models`, `GET /v1/models/{id}` (public).
+  - Seeds the chat model from `AI_CHAT_MODEL`, advertised only when the gateway is
+    configured; the `Demo` image/video models only when `GENERATION_MODE=mock`.
+  - Acceptance: only available models are returned (unknown or unavailable → `404`);
+    prices match the seed; all three reads are public. Covered by
+    `tests/integration/test_catalog.py` and the route matrix.
 
 - [ ] **B2.2 Credit ledger service**
   - Implement `reserve`, `commit`, `refund`, `grant`, and `reset` over the Phase 1
