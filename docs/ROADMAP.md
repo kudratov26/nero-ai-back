@@ -74,7 +74,7 @@ revocation and origin checks are tested.
   - Password change revokes other sessions.
   - Acceptance: CSRF/origin tests, rate-limit tests, revocation tests.
 
-- [ ] **B1.4 Account test matrix**
+- [x] **B1.4 Account test matrix**
   - Parametrized authorization tests for authenticated vs anonymous routes.
   - Ensure no route accidentally leaks another user's row.
   - Acceptance: tests fail if a route is added without an auth dependency.
@@ -312,7 +312,7 @@ B7.1 -> B7.2 -> B7.3 -> B7.4 (blocked on provider key)
 | Phase | Status |
 | --- | --- |
 | 0 Foundation | done |
-| 1 Accounts | in progress (B1.1–B1.3 done) |
+| 1 Accounts | complete (B1.1–B1.4) |
 | 2 Credits | not started |
 | 3 Chat | not started |
 | 4 Explore | not started |

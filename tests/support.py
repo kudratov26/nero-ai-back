@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, NamedTuple
 
 import httpx
 from fastapi import FastAPI
@@ -21,6 +21,61 @@ TEST_DATABASE_URL = os.environ.get(
 TEST_SECRET = "test-secret-not-for-production"
 TEST_ORIGIN = "http://localhost:3000"
 PASSWORD = "correct horse battery"
+
+
+class RouteCase(NamedTuple):
+    """One HTTP method on one documented path.
+
+    `anonymous_status` and `anonymous_code` are the outcome an unauthenticated
+    caller gets, so the authorization matrix has an explicit expectation per
+    route rather than an inferred one.
+    """
+
+    method: str
+    path: str
+    anonymous_status: int
+    anonymous_code: str | None = None
+
+
+# Every route the API serves, split by whether it needs a session. The inventory
+# test in `tests/unit/test_route_matrix.py` fails when the app exposes a route
+# missing from these tables, so a new endpoint cannot ship without an explicit
+# authentication decision and, when protected, the `get_current_auth` dependency.
+#
+# FastAPI's own `/openapi.json`, `/docs`, and `/docs/oauth2-redirect` are excluded:
+# they are framework plumbing, not part of the contract.
+PUBLIC_ROUTES: tuple[RouteCase, ...] = (
+    RouteCase("GET", "/health/live", 200),
+    RouteCase("GET", "/health/ready", 200),
+    RouteCase("POST", "/v1/auth/logout", 204),
+    RouteCase("POST", "/v1/auth/signup", 400, "invalid_request"),
+    RouteCase("POST", "/v1/auth/login", 400, "invalid_request"),
+)
+
+PROTECTED_ROUTES: tuple[RouteCase, ...] = (
+    RouteCase("GET", "/v1/auth/me", 401, "unauthorized"),
+    RouteCase("PATCH", "/v1/auth/me", 401, "unauthorized"),
+    RouteCase("POST", "/v1/auth/password", 401, "unauthorized"),
+    RouteCase("GET", "/v1/auth/sessions", 401, "unauthorized"),
+    RouteCase("DELETE", "/v1/auth/sessions/{session_id}", 401, "unauthorized"),
+)
+
+ROUTES: tuple[RouteCase, ...] = PUBLIC_ROUTES + PROTECTED_ROUTES
+DOCUMENTED_PATHS: frozenset[str] = frozenset(case.path for case in ROUTES)
+
+#: Sample values for `{param}` placeholders, so probes reach the auth layer with a
+#: syntactically valid path instead of failing validation with 422.
+PATH_PARAM_SAMPLES: dict[str, str] = {
+    "session_id": "0193a0e0-0000-7000-8000-000000000000",
+}
+
+
+def route_path(case: RouteCase) -> str:
+    """Fill a route template's path parameters with sample values."""
+    path = case.path
+    for name, value in PATH_PARAM_SAMPLES.items():
+        path = path.replace(f"{{{name}}}", value)
+    return path
 
 
 def make_settings(**overrides: Any) -> Settings:

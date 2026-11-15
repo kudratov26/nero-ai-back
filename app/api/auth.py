@@ -264,13 +264,14 @@ async def update_me(
 )
 async def change_password(
     body: PasswordChangeRequest,
-    request: Request,
+    context: Annotated[AuthContext, Depends(get_current_auth)],
     settings: Annotated[Settings, Depends(get_app_settings)],
     session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
 ) -> Response:
     token = await auth_service.change_password(
         session_factory,
-        token=request.cookies.get(settings.session_cookie_name),
+        user_id=context.user.id,
+        session_id=context.session.id,
         current_password=body.current_password,
         new_password=body.new_password,
     )

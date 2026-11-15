@@ -369,19 +369,25 @@ async def logout(
             row.revoked_at = now
 
 
-async def _active_session(
+async def _live_session(
     session: AsyncSession,
     *,
-    token: str,
+    user_id: UUID,
+    session_id: UUID,
     now: datetime,
 ) -> tuple[UserSession, User]:
-    """Load the live session behind a token together with its active user."""
+    """Load a specific live session together with its active user.
+
+    Re-checks liveness inside the transaction that mutates state, so a session
+    revoked between the auth dependency and the use case is still caught.
+    """
     row = (
         await session.execute(
             select(UserSession, User)
             .join(User, User.id == UserSession.user_id)
             .where(
-                UserSession.token_hash == hash_session_token(token),
+                UserSession.id == session_id,
+                UserSession.user_id == user_id,
                 UserSession.revoked_at.is_(None),
                 UserSession.expires_at > now,
                 User.status == "active",
@@ -412,7 +418,8 @@ async def update_display_name(
 async def change_password(
     session_factory: async_sessionmaker[AsyncSession],
     *,
-    token: str | None,
+    user_id: UUID,
+    session_id: UUID,
     current_password: str,
     new_password: str,
 ) -> str:
@@ -421,11 +428,11 @@ async def change_password(
     Returns the replacement token for the caller's cookie. Every other live
     session is revoked, so a stolen cookie stops working.
     """
-    if not token:
-        raise _unauthorized()
     now = datetime.now(tz=UTC)
     async with session_scope(session_factory) as session:
-        session_row, user = await _active_session(session, token=token, now=now)
+        session_row, user = await _live_session(
+            session, user_id=user_id, session_id=session_id, now=now
+        )
         if not verify_password(current_password, user.password_hash):
             raise _wrong_password()
         validate_password(new_password, user.email)

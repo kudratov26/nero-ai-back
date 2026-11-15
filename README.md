@@ -3,12 +3,12 @@
 Python backend for the Nero AI frontend. It owns real accounts, sessions, a
 server-authoritative Credit ledger, Chats, Generations, Assets, and provider access.
 
-**Status:** Phase 0 complete. Phase 1 (accounts and sessions) is in progress:
-B1.1 provides the user, session, plan, and Credit schema plus Argon2id and opaque
-session-token primitives; B1.2 provides `signup`, `login`, `logout`, and `/v1/auth/me`
-with atomic Free-plan provisioning; B1.3 adds profile and password updates, session
-listing and revocation, the Origin check on unsafe methods, login/signup rate limits,
-and the 1 MiB request body cap.
+**Status:** Phase 0 complete, Phase 1 complete. B1.1 provides the user, session, plan,
+and Credit schema plus Argon2id and opaque session-token primitives; B1.2 provides
+`signup`, `login`, `logout`, and `/v1/auth/me` with atomic Free-plan provisioning; B1.3
+adds profile and password updates, session listing and revocation, the Origin check on
+unsafe methods, login/signup rate limits, and the 1 MiB request body cap; B1.4 adds the
+authorization test matrix that fails when a route ships without an auth decision.
 
 ## Read first
 
