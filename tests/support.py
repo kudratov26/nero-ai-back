@@ -30,12 +30,17 @@ class RouteCase(NamedTuple):
     authorization matrix has an explicit expectation per route rather than an
     inferred one. `None` means "any response that is not the `401 unauthorized`
     problem", for routes whose exact status depends on seeded data.
+
+    `probe_body` overrides the empty `{}` sent for methods that carry a body. An
+    empty object reaches the auth dependency but not the handler, so a route that
+    validates its body first would answer `400` before the ownership check runs.
     """
 
     method: str
     path: str
     anonymous_status: int | None
     anonymous_code: str | None = None
+    probe_body: dict[str, object] | None = None
 
 
 # Every route the API serves, split by whether it needs a session. The inventory
@@ -67,6 +72,19 @@ PROTECTED_ROUTES: tuple[RouteCase, ...] = (
     RouteCase("GET", "/v1/credits", 401, "unauthorized"),
     RouteCase("GET", "/v1/credits/ledger", 401, "unauthorized"),
     RouteCase("POST", "/v1/account/plan", 401, "unauthorized"),
+    RouteCase("GET", "/v1/chats", 401, "unauthorized"),
+    RouteCase("POST", "/v1/chats", 401, "unauthorized"),
+    RouteCase("GET", "/v1/chats/{chat_id}", 401, "unauthorized"),
+    # A rename probe needs a valid title, or the response is a 400 from body
+    # validation instead of the 401 from the auth dependency this table asserts.
+    RouteCase(
+        "PATCH",
+        "/v1/chats/{chat_id}",
+        401,
+        "unauthorized",
+        probe_body={"title": "Probe"},
+    ),
+    RouteCase("DELETE", "/v1/chats/{chat_id}", 401, "unauthorized"),
 )
 
 ROUTES: tuple[RouteCase, ...] = PUBLIC_ROUTES + PROTECTED_ROUTES
@@ -77,6 +95,7 @@ DOCUMENTED_PATHS: frozenset[str] = frozenset(case.path for case in ROUTES)
 PATH_PARAM_SAMPLES: dict[str, str] = {
     "session_id": "0193a0e0-0000-7000-8000-000000000000",
     "model_id": "model-does-not-exist",
+    "chat_id": "0193a0e0-0000-7000-8000-000000000000",
 }
 
 

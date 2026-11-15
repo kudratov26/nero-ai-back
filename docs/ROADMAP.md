@@ -148,10 +148,12 @@ on retry.
     `tests/unit/test_providers.py`, `tests/unit/test_cli.py`, and
     `tests/unit/test_config.py`.
 
-- [ ] **B3.2 Chat CRUD**
+- [x] **B3.2 Chat CRUD**
   - `chats` table, migration, service, routes.
   - Cursor pagination, soft delete, ownership 404 behavior, title generation.
-  - Acceptance: CRUD tests, cross-user 404 tests, pagination tests.
+  - Acceptance: CRUD tests, cross-user 404 tests, pagination tests. Covered by
+    `tests/integration/test_chats.py`, `tests/integration/test_schema.py`,
+    `tests/integration/test_auth_matrix.py`, and `tests/unit/test_chat_titles.py`.
 
 - [ ] **B3.3 Messages and SSE**
   - `messages` table and persistence.

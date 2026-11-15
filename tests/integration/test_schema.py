@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import generate_session_token, hash_session_token
 from app.db.models import (
+    Chat,
     CreditAccount,
     CreditLedgerEntry,
     IdempotencyKey,
@@ -115,6 +116,23 @@ def make_model(**overrides: Any) -> Model:
     }
     values.update(overrides)
     return Model(**values)
+
+
+def make_chat(user_id: UUID, **overrides: Any) -> Chat:
+    values: dict[str, Any] = {
+        "user_id": user_id,
+        "model_id": "test-model",
+        "title": "A test chat",
+    }
+    values.update(overrides)
+    return Chat(**values)
+
+
+async def add_model(session: AsyncSession, **overrides: Any) -> Model:
+    model = make_model(**overrides)
+    session.add(model)
+    await session.flush()
+    return model
 
 
 async def add_user(session: AsyncSession, **overrides: Any) -> User:
@@ -490,5 +508,72 @@ async def test_deleting_a_user_cascades_idempotency_keys(db_session: AsyncSessio
 
     count = await db_session.scalar(
         select(func.count()).select_from(IdempotencyKey).where(IdempotencyKey.user_id == user_id)
+    )
+    assert count == 0
+
+
+# --- Chats -------------------------------------------------------------------
+
+
+async def test_chat_accepts_valid_state(db_session: AsyncSession) -> None:
+    user = await add_user(db_session)
+    await add_model(db_session)
+    db_session.add(make_chat(user.id))
+
+    await db_session.flush()
+
+    chat = await db_session.scalar(select(Chat).where(Chat.user_id == user.id))
+    assert chat is not None
+    assert chat.title == "A test chat"
+    assert chat.title_is_custom is False
+    assert chat.deleted_at is None
+    assert chat.created_at.tzinfo is not None
+    assert chat.created_at.utcoffset() == timedelta(0)
+    assert chat.updated_at.tzinfo is not None
+
+
+@pytest.mark.parametrize("title", ["", "   ", "x" * 81])
+async def test_chat_title_constraints(db_session: AsyncSession, title: str) -> None:
+    user = await add_user(db_session)
+    await add_model(db_session)
+    db_session.add(make_chat(user.id, title=title))
+
+    with pytest.raises(IntegrityError):
+        await db_session.flush()
+
+
+async def test_a_chat_must_name_an_existing_model(db_session: AsyncSession) -> None:
+    user = await add_user(db_session)
+    db_session.add(make_chat(user.id, model_id="no-such-model"))
+
+    with pytest.raises(IntegrityError):
+        await db_session.flush()
+
+
+async def test_a_referenced_model_cannot_be_deleted(db_session: AsyncSession) -> None:
+    """History must keep naming the model that produced it."""
+    user = await add_user(db_session)
+    model = await add_model(db_session)
+    db_session.add(make_chat(user.id))
+    await db_session.flush()
+
+    await db_session.delete(model)
+
+    with pytest.raises(IntegrityError):
+        await db_session.flush()
+
+
+async def test_deleting_a_user_cascades_chats(db_session: AsyncSession) -> None:
+    user = await add_user(db_session)
+    await add_model(db_session)
+    db_session.add(make_chat(user.id))
+    await db_session.flush()
+    user_id = user.id
+
+    await db_session.delete(user)
+    await db_session.flush()
+
+    count = await db_session.scalar(
+        select(func.count()).select_from(Chat).where(Chat.user_id == user_id)
     )
     assert count == 0

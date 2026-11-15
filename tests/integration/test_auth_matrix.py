@@ -20,8 +20,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from app.api.problems import ApiError, ErrorCode
-from app.db.models import UserSession
-from app.db.session import create_session_factory
+from app.db.models import Chat, UserSession
+from app.db.seed import upsert_models
+from app.db.session import create_session_factory, session_scope
 from app.domain import auth as auth_service
 from app.main import create_app
 from tests.support import (
@@ -42,6 +43,10 @@ BODY_METHODS = frozenset({"POST", "PUT", "PATCH"})
 PROTECTED_PARAM_NAMES = frozenset(
     name for case in PROTECTED_ROUTES for name in PATH_PARAM.findall(case.path)
 )
+CONFIGURED_CHAT = {
+    "ai_base_url": "https://gateway.example.test/v1",
+    "ai_api_key": "test-key-not-a-real-secret",
+}
 
 
 @dataclass
@@ -57,8 +62,12 @@ def request_body(case: RouteCase) -> dict[str, object] | None:
     """A minimal body for methods that carry one.
 
     Dependencies run before body validation, so `{}` is enough to reach the auth
-    layer; these probes never need a valid payload.
+    layer; these probes never need a valid payload. A route whose handler
+    validates before checking ownership declares `probe_body` instead, so the
+    probe still reaches the ownership check rather than stopping at a `400`.
     """
+    if case.probe_body is not None:
+        return dict(case.probe_body)
     return {} if case.method in BODY_METHODS else None
 
 
@@ -138,7 +147,7 @@ async def test_protected_routes_reject_a_revoked_session(
 # --- Cross-user (IDOR) matrix ------------------------------------------------
 
 
-async def _victim_session_id(victim: Account, _db: AsyncSession) -> str:
+async def _victim_session_id(victim: Account, _engine: AsyncEngine) -> str:
     listed = await victim.client.get("/v1/auth/sessions")
     assert listed.status_code == 200, listed.text
     items = listed.json()
@@ -146,10 +155,35 @@ async def _victim_session_id(victim: Account, _db: AsyncSession) -> str:
     return str(items[0]["id"])
 
 
+async def _victim_chat_id(victim: Account, engine: AsyncEngine) -> str:
+    """Return the victim's chat, creating it once.
+
+    Written directly rather than through `POST /v1/chats`: a chat needs the
+    catalog seeded, which is a different suite's concern, and these probes are
+    about authorization. The write commits, because the API reads through its own
+    connection and would not see an uncommitted row. The find-or-create makes the
+    id stable across the before/after check, so a rejected `PATCH` or `DELETE`
+    that leaked through would show up as a changed row.
+    """
+    settings = make_settings(**CONFIGURED_CHAT)
+    async with session_scope(create_session_factory(engine)) as session:
+        await upsert_models(session, settings)
+        existing = await session.scalar(
+            select(Chat).where(Chat.user_id == victim.user_id).order_by(Chat.id).limit(1)
+        )
+        if existing is not None:
+            return str(existing.id)
+        chat = Chat(user_id=victim.user_id, model_id=settings.ai_chat_model, title="Victim chat")
+        session.add(chat)
+        await session.flush()
+        return str(chat.id)
+
+
 #: Path parameter -> the victim's resource the attacker must not reach. Every path
 #: parameter on a protected route needs an entry; the guard test below enforces it.
-IDOR_RESOLVERS: dict[str, Callable[[Account, AsyncSession], Awaitable[str]]] = {
+IDOR_RESOLVERS: dict[str, Callable[[Account, AsyncEngine], Awaitable[str]]] = {
     "session_id": _victim_session_id,
+    "chat_id": _victim_chat_id,
 }
 
 
@@ -166,10 +200,10 @@ async def test_cross_user_requests_are_not_found(
     case: RouteCase,
     attacker: Account,
     victim: Account,
-    db_session: AsyncSession,
+    engine: AsyncEngine,
 ) -> None:
     names = PATH_PARAM.findall(case.path)
-    before = {name: await IDOR_RESOLVERS[name](victim, db_session) for name in names}
+    before = {name: await IDOR_RESOLVERS[name](victim, engine) for name in names}
     path = case.path
     for name, value in before.items():
         path = path.replace(f"{{{name}}}", value)
@@ -177,11 +211,23 @@ async def test_cross_user_requests_are_not_found(
     response = await attacker.client.request(case.method, path, json=request_body(case))
 
     assert_problem(response, 404, "not_found")
-    # The victim is still signed in and still sees exactly the same resource, so
-    # the rejected request neither mutated nor hid another account's row.
+    # The rejected request neither mutated nor hid another account's row.
     assert (await victim.client.get("/v1/auth/me")).status_code == 200
-    after = {name: await IDOR_RESOLVERS[name](victim, db_session) for name in names}
+    after = {name: await IDOR_RESOLVERS[name](victim, engine) for name in names}
     assert after == before
+
+
+async def test_the_victim_can_still_reach_a_chat_the_attacker_was_denied(
+    victim: Account, engine: AsyncEngine
+) -> None:
+    """The `404` hides the row without destroying it."""
+    chat_id = await _victim_chat_id(victim, engine)
+
+    response = await victim.client.get(f"/v1/chats/{chat_id}")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["title"] == "Victim chat"
+    assert response.json()["id"] == chat_id
 
 
 async def test_cross_user_session_ids_stay_separate(

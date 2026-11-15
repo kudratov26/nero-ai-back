@@ -170,13 +170,11 @@ async def test_ledger_paginates_with_an_opaque_cursor(
     [
         "not-a-cursor",
         encode_cursor({}),
-        encode_cursor({"createdAt": "2026-11-15T12:00:00Z"}),
-        encode_cursor({"createdAt": "2026-11-15T12:00:00Z", "id": "not-a-uuid"}),
-        encode_cursor({"createdAt": "not-a-date", "id": "0193a0e0-0000-7000-8000-000000000000"}),
+        encode_cursor({"at": "2026-11-15T12:00:00Z"}),
+        encode_cursor({"at": "2026-11-15T12:00:00Z", "id": "not-a-uuid"}),
+        encode_cursor({"at": "not-a-date", "id": "0193a0e0-0000-7000-8000-000000000000"}),
         # A well-formed but timezone-naive timestamp is still rejected.
-        encode_cursor(
-            {"createdAt": "2026-11-15T12:00:00", "id": "0193a0e0-0000-7000-8000-000000000000"}
-        ),
+        encode_cursor({"at": "2026-11-15T12:00:00", "id": "0193a0e0-0000-7000-8000-000000000000"}),
     ],
 )
 async def test_ledger_rejects_a_bad_cursor(
