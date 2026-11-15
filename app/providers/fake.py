@@ -7,6 +7,7 @@ never as a real model.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 
@@ -42,10 +43,13 @@ class FakeChatProvider:
     `fail_with` (with `fail_after` text chunks emitted first) simulates a
     mid-stream failure; `fail_after=None` fails after the whole reply but before
     the final delta. `usage` is reported on the final delta when set.
+    `delay_seconds` simulates a slow first token, so heartbeat tests can keep
+    the stream idle with a short wait instead of a real 15-second one.
     """
 
     reply: str = DEFAULT_REPLY
     chunk_size: int = 4
+    delay_seconds: float = 0.0
     usage: ChatUsage | None = None
     finish_reason: str = "stop"
     fail_with: ProviderError | None = None
@@ -64,6 +68,8 @@ class FakeChatProvider:
         params: ChatParams,
     ) -> AsyncIterator[ChatDelta]:
         self.requests.append(FakeRequest(messages=tuple(messages), model=model, params=params))
+        if self.delay_seconds > 0:
+            await asyncio.sleep(self.delay_seconds)
         chunks = _chunks(self.reply, self.chunk_size)
         for index, chunk in enumerate(chunks):
             if (

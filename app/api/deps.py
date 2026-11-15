@@ -11,6 +11,7 @@ from app.api.problems import ApiError, ErrorCode
 from app.core.config import Settings
 from app.core.rate_limit import MemoryRateLimiter
 from app.domain.auth import AuthContext, authenticate
+from app.providers.base import ChatProvider
 
 
 def get_app_settings(request: Request) -> Settings:
@@ -29,6 +30,12 @@ def get_rate_limiter(request: Request) -> MemoryRateLimiter:
     if limiter is None:
         raise RuntimeError("the rate limiter is not initialized")
     return cast(MemoryRateLimiter, limiter)
+
+
+def get_chat_provider(request: Request) -> ChatProvider | None:
+    """Return the configured chat provider, or `None` when the gateway is unset."""
+    provider = getattr(request.app.state, "chat_provider", None)
+    return cast(ChatProvider | None, provider)
 
 
 def enforce_rate_limit(

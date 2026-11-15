@@ -155,14 +155,16 @@ on retry.
     `tests/integration/test_chats.py`, `tests/integration/test_schema.py`,
     `tests/integration/test_auth_matrix.py`, and `tests/unit/test_chat_titles.py`.
 
-- [ ] **B3.3 Messages and SSE**
+- [x] **B3.3 Messages and SSE**
   - `messages` table and persistence.
   - `POST /v1/chats/{id}/messages` with `message.started`, `message.delta`,
-    `message.completed`, `message.failed`, `done`.
+    `message.completed`, `message.failed`, `done`; `GET /v1/chats/{id}/messages` for
+    cursor-paginated history.
   - Reserve/commit/refund integration; heartbeat comments; persist partial content on
     failure.
   - Acceptance: streaming test collects ordered events; credits commit exactly once;
-    provider error refunds; no buffering.
+    provider error refunds; no buffering. Covered by
+    `tests/integration/test_messages.py` and `tests/integration/test_schema.py`.
 
 - [ ] **B3.4 Disconnect, cancel, and idempotency**
   - Detect client disconnect, cancel provider task, mark message `cancelled`, refund.

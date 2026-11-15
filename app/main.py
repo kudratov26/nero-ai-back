@@ -20,10 +20,21 @@ from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging
 from app.core.rate_limit import MemoryRateLimiter
 from app.db.session import create_engine, create_session_factory
+from app.providers.base import ChatProvider
+from app.providers.openai_compatible import build_chat_provider
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
-    """Build the ASGI app. Takes explicit settings in tests."""
+def create_app(
+    settings: Settings | None = None,
+    *,
+    chat_provider: ChatProvider | None = None,
+) -> FastAPI:
+    """Build the ASGI app. Takes explicit settings in tests.
+
+    `chat_provider` is a test seam: the fake provider is injected instead of
+    building an HTTP adapter from settings. Production passes nothing and the
+    lifespan builds the configured adapter (or `None` when unconfigured).
+    """
     resolved = settings if settings is not None else get_settings()
     configure_logging(resolved)
 
@@ -32,10 +43,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         engine = create_engine(resolved.database_url)
         app.state.engine = engine
         app.state.session_factory = create_session_factory(engine)
+        provider = chat_provider if chat_provider is not None else build_chat_provider(resolved)
+        app.state.chat_provider = provider
         try:
             yield
         finally:
-            await engine.dispose()
+            try:
+                if provider is not None:
+                    await provider.aclose()
+            finally:
+                await engine.dispose()
 
     app = FastAPI(
         title="Nero AI API",

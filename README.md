@@ -19,7 +19,9 @@ is in progress: B3.1 adds the `ChatProvider` port, DTOs, and error taxonomy, the
 OpenAI-compatible streaming adapter used for the Coarena/DeepSeek gateway, a deterministic
 fake provider for tests, and `python -m app.cli provider-check`; B3.2 adds the `chats` table
 and its migration, chat create/read/rename/soft-delete routes, opaque-cursor listing, and
-the ownership rule that reports another account's chat as `404`.
+the ownership rule that reports another account's chat as `404`; B3.3 adds the `messages`
+table, cursor-paginated history, and the streamed reply endpoint that persists both turns,
+reserves and settles Credits, emits heartbeats, and refunds a failed reply.
 
 ## Read first
 
