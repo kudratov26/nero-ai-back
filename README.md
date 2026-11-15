@@ -10,7 +10,9 @@ adds profile and password updates, session listing and revocation, the Origin ch
 unsafe methods, login/signup rate limits, and the 1 MiB request body cap; B1.4 adds the
 authorization test matrix that fails when a route ships without an auth decision. Phase 2
 is in progress: B2.1 adds the `models` table, its migration, the seed step, and the public
-`GET /v1/plans`, `GET /v1/models`, and `GET /v1/models/{id}` catalog reads.
+`GET /v1/plans`, `GET /v1/models`, and `GET /v1/models/{id}` catalog reads; B2.2 adds the
+Credit ledger service (`reserve`, `commit`, `refund`, `grant`, `reset`) with row locking
+and an append-only ledger.
 
 ## Read first
 

@@ -272,14 +272,25 @@ Invariants:
 - Operations lock the account row (`SELECT ... FOR UPDATE`) and update the ledger in the
   same transaction.
 
-Lifecycle:
+`app/domain/credits.py` is the only writer. It exposes `reserve`, `commit`, `refund`,
+`grant`, and `reset`; each locks the account row, applies the change, and appends one
+`credit_ledger_entries` row in the caller's transaction, so Credits and the related domain
+rows commit or roll back together. The opening signup grant goes through the same path.
 
-| Step | balance | held | ledger kind |
-| --- | --- | --- | --- |
-| Grant 50 | +50 | 0 | grant |
-| Reserve 2 | -2 | +2 | reserve |
-| Commit | 0 | -2 | commit |
-| Refund instead | +2 | -2 | refund |
+Lifecycle (`delta_balance`/`delta_held` are the changes to the account columns):
+
+| Step | balance | held | available | delta_balance | delta_held | kind |
+| --- | --- | --- | --- | --- | --- | --- |
+| Grant 50 | 50 | 0 | 50 | +50 | 0 | grant |
+| Reserve 2 | 50 | 2 | 48 | 0 | +2 | reserve |
+| Commit 2 | 48 | 0 | 48 | -2 | -2 | commit |
+| Refund 2 instead | 50 | 0 | 50 | 0 | -2 | refund |
+
+A reserve larger than `available` is `409 insufficient_credits` with the required and
+remaining amounts, e.g. `This run needs 15 Credits; 6 are available.` A non-positive
+amount or settling more than is held is a programming error (the client never sends an
+amount), and `reset` restores `balance` to the current `allowance` and refunds any hold
+with a single `reset` entry; when nothing changes it writes nothing.
 
 ### 7.3 Credit endpoints
 

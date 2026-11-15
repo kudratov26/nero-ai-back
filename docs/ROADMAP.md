@@ -98,12 +98,14 @@ append-only and no operation can make available Credits negative.
     prices match the seed; all three reads are public. Covered by
     `tests/integration/test_catalog.py` and the route matrix.
 
-- [ ] **B2.2 Credit ledger service**
-  - Implement `reserve`, `commit`, `refund`, `grant`, and `reset` over the Phase 1
-    schema; enforce invariants in one place.
-  - Row locking; `available = balance - held`; append-only entries.
-  - Acceptance: property-style tests, concurrency test with two reserves, ledger entries
-    written for every transition.
+- [x] **B2.2 Credit ledger service**
+  - `app/domain/credits.py` implements `reserve`, `commit`, `refund`, `grant`, and
+    `reset` over the Phase 1 schema; the signup opening grant now goes through `grant`.
+  - Each operation locks the account row (`SELECT ... FOR UPDATE`), applies the change,
+    and appends one immutable ledger entry in the caller's transaction.
+  - Acceptance: property-style random-walk test, a concurrency test where two reserves
+    cannot overspend, and ledger-entry assertions for every transition
+    (`tests/integration/test_credits.py`).
 
 - [ ] **B2.3 Credit endpoints and simulated plan change**
   - `GET /v1/credits`, `GET /v1/credits/ledger` (cursor pagination),

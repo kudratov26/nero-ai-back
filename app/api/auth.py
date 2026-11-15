@@ -34,6 +34,7 @@ from app.core.config import Settings
 from app.core.rate_limit import MemoryRateLimiter
 from app.db.models import User, UserSession
 from app.domain import auth as auth_service
+from app.domain import credits as credits_service
 from app.domain.auth import AuthContext, IssuedSession, normalize_email
 
 # `docs/SPEC.md` section 15: login 5 per 15 minutes per IP + email, signup 3 per
@@ -119,7 +120,7 @@ def _me_response(context: AuthContext) -> MeResponse:
         credits=CreditsSummary(
             balance=account.balance,
             held=account.held,
-            available=account.balance - account.held,
+            available=credits_service.available(account),
             allowance=account.allowance,
             period_start=account.period_start,
             period_end=account.period_end,
