@@ -13,7 +13,8 @@ is in progress: B2.1 adds the `models` table, its migration, the seed step, and 
 `GET /v1/plans`, `GET /v1/models`, and `GET /v1/models/{id}` catalog reads; B2.2 adds the
 Credit ledger service (`reserve`, `commit`, `refund`, `grant`, `reset`) with row locking
 and an append-only ledger; B2.3 exposes `GET /v1/credits`, the cursor-paginated
-`GET /v1/credits/ledger`, and the simulated `POST /v1/account/plan`.
+`GET /v1/credits/ledger`, and the simulated `POST /v1/account/plan`; B2.4 adds the
+`idempotency_keys` table and the create-once helper that replays a retried request.
 
 ## Read first
 
