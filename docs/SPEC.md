@@ -630,10 +630,20 @@ idempotency_keys
   key         text
   operation   text
   request_hash text
-  resource_id uuid
+  resource_id uuid           -- no fk: whatever the operation created
   created_at  timestamptz
-  unique (user_id, key)
+  primary key (user_id, key)
 ```
+
+`idempotency_keys` is the foundation for every idempotent create. A create route
+requires an `Idempotency-Key` header and keys its request on `(user_id, key)`. The record
+is written in the same transaction as the resource it names, so a failed request leaves no
+key behind. Replaying the same key and body returns the original `resource_id`; the same
+key with a different body (or a different operation under the same key) is
+`409 idempotency_conflict`. `app/domain/idempotency.py` owns this: `hash_request`
+canonicalizes the body into `request_hash`, `find` reads a stored key, and `execute`
+creates once and replays after that, including when two concurrent requests race on the
+same key. An unkeyed or malformed key is rejected at the route, not the service.
 
 ### 12.2 Endpoints
 

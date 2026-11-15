@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import delete, func, select, update
@@ -12,7 +12,15 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import generate_session_token, hash_session_token
-from app.db.models import CreditAccount, CreditLedgerEntry, Model, Plan, User, UserSession
+from app.db.models import (
+    CreditAccount,
+    CreditLedgerEntry,
+    IdempotencyKey,
+    Model,
+    Plan,
+    User,
+    UserSession,
+)
 from app.db.models.common import utcnow
 from app.db.seed import PLAN_SEEDS, plan_values, upsert_plans
 
@@ -75,6 +83,18 @@ def make_session(user_id: UUID, **overrides: Any) -> UserSession:
     }
     values.update(overrides)
     return UserSession(**values)
+
+
+def make_idempotency_key(user_id: UUID, **overrides: Any) -> IdempotencyKey:
+    values: dict[str, Any] = {
+        "user_id": user_id,
+        "key": "key-1",
+        "operation": "generation.create",
+        "request_hash": "a" * 64,
+        "resource_id": uuid4(),
+    }
+    values.update(overrides)
+    return IdempotencyKey(**values)
 
 
 def make_model(**overrides: Any) -> Model:
@@ -395,3 +415,80 @@ async def test_video_model_accepts_a_10s_price(db_session: AsyncSession) -> None
     db_session.add(make_model(id="video-model", modality="video", credit_cost_10s=30))
 
     await db_session.flush()
+
+
+# --- Idempotency keys --------------------------------------------------------
+
+
+async def test_idempotency_key_accepts_valid_row(db_session: AsyncSession) -> None:
+    user = await add_user(db_session)
+    key = make_idempotency_key(user.id, resource_id=user.id)
+    db_session.add(key)
+
+    await db_session.flush()
+    await db_session.refresh(key)
+
+    assert key.created_at.tzinfo is not None
+    assert key.resource_id == user.id
+
+
+async def test_idempotency_key_is_unique_per_user(db_session: AsyncSession) -> None:
+    user = await add_user(db_session)
+    db_session.add(make_idempotency_key(user.id))
+    await db_session.flush()
+
+    db_session.add(make_idempotency_key(user.id, resource_id=uuid4()))
+
+    with pytest.raises(IntegrityError):
+        await db_session.flush()
+
+
+async def test_the_same_key_may_be_used_by_another_user(db_session: AsyncSession) -> None:
+    first = await add_user(db_session, email="first@example.com")
+    second = await add_user(db_session, email="second@example.com")
+    db_session.add_all(
+        [make_idempotency_key(first.id), make_idempotency_key(second.id, resource_id=uuid4())]
+    )
+
+    await db_session.flush()
+
+    count = await db_session.scalar(
+        select(func.count())
+        .select_from(IdempotencyKey)
+        .where(IdempotencyKey.user_id.in_([first.id, second.id]))
+    )
+    assert count == 2
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"key": "   "},
+        {"key": "x" * 256},
+        {"operation": ""},
+        {"request_hash": "too-short"},
+    ],
+)
+async def test_idempotency_key_constraints(
+    db_session: AsyncSession, overrides: dict[str, Any]
+) -> None:
+    user = await add_user(db_session)
+    db_session.add(make_idempotency_key(user.id, **overrides))
+
+    with pytest.raises(IntegrityError):
+        await db_session.flush()
+
+
+async def test_deleting_a_user_cascades_idempotency_keys(db_session: AsyncSession) -> None:
+    user = await add_user(db_session)
+    user_id = user.id
+    db_session.add(make_idempotency_key(user_id))
+    await db_session.flush()
+
+    await db_session.delete(user)
+    await db_session.flush()
+
+    count = await db_session.scalar(
+        select(func.count()).select_from(IdempotencyKey).where(IdempotencyKey.user_id == user_id)
+    )
+    assert count == 0

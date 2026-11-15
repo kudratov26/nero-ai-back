@@ -117,11 +117,15 @@ append-only and no operation can make available Credits negative.
     `tests/integration/test_billing.py`, `tests/unit/test_cursor.py`, and
     `tests/unit/test_config.py`.
 
-- [ ] **B2.4 Idempotency foundation**
-  - `idempotency_keys` table and helper service.
-  - Same key + same request returns the original resource; different request body returns
-    `409 idempotency_conflict`.
-  - Acceptance: concurrent duplicate requests create one resource.
+- [x] **B2.4 Idempotency foundation**
+  - `idempotency_keys` table (migration `0004`), keyed on `(user_id, key)`, plus
+    `app/domain/idempotency.py` as the helper service (`hash_request`, `find`, `execute`).
+  - Same key + same request returns the original resource; a different body or operation
+    returns `409 idempotency_conflict`.
+  - Acceptance: concurrent duplicates create one resource, replayed work runs `create`
+    once, and a non-race integrity error propagates without a key row. Covered by
+    `tests/integration/test_idempotency.py`, `tests/unit/test_idempotency.py`, and the
+    schema tests.
 
 ---
 
