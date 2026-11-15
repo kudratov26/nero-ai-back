@@ -18,6 +18,7 @@ here in the same PR.
 | **Refund** | Returning held Credits to available after failure, cancel, or timeout. |
 | **Ledger** | The append-only record of every Credit movement. Rows are never updated or deleted. |
 | **Grant** | Credits added by signup, a plan change, or a reset. |
+| **Reset** | Restoring the account to the current plan Allowance and refunding any Held Credits in one `reset` ledger entry. |
 | **Model** | A selectable chat, image, or video model in the server catalog. Has a stable public `id` and a provider-specific `provider_model_id`. |
 | **Modality** | One of `chat`, `image`, or `video`. |
 | **Provider** | The external service that runs a model, such as the Coarena gateway. |

@@ -21,8 +21,9 @@ from app.core.security import (
     hash_session_token,
     verify_password,
 )
-from app.db.models import CreditAccount, CreditLedgerEntry, Plan, User, UserSession
+from app.db.models import CreditAccount, Plan, User, UserSession
 from app.db.session import session_scope
+from app.domain import credits
 
 FREE_PLAN_ID = "free"
 PLAN_PERIOD_DAYS = 30
@@ -170,29 +171,31 @@ async def _provision_free_account(
     user_id: UUID,
     now: datetime,
 ) -> tuple[Plan, CreditAccount]:
-    """Create the account and its opening grant from the seeded Free plan."""
+    """Create the account and its opening grant from the seeded Free plan.
+
+    The account starts empty and the grant goes through the ledger service, so
+    the opening entry is built the same way as every later movement.
+    """
     plan = await session.get(Plan, FREE_PLAN_ID)
     if plan is None:
         raise RuntimeError("the free plan is not seeded")
     account = CreditAccount(
         user_id=user_id,
         plan_id=plan.id,
-        balance=plan.monthly_credits,
+        balance=0,
         held=0,
         allowance=plan.monthly_credits,
         period_start=now,
         period_end=now + timedelta(days=PLAN_PERIOD_DAYS),
     )
-    grant = CreditLedgerEntry(
+    session.add(account)
+    await session.flush()
+    await credits.grant(
+        session,
         user_id=user_id,
-        kind="grant",
-        delta_balance=plan.monthly_credits,
-        delta_held=0,
-        balance_after=plan.monthly_credits,
-        held_after=0,
+        amount=plan.monthly_credits,
         reason=f"{plan.name} plan allowance",
     )
-    session.add_all([account, grant])
     return plan, account
 
 
