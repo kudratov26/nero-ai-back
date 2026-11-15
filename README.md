@@ -15,7 +15,7 @@ Credit ledger service (`reserve`, `commit`, `refund`, `grant`, `reset`) with row
 and an append-only ledger; B2.3 exposes `GET /v1/credits`, the cursor-paginated
 `GET /v1/credits/ledger`, and the simulated `POST /v1/account/plan`; B2.4 adds the
 `idempotency_keys` table and the create-once helper that replays a retried request. Phase 3
-is in progress: B3.1 adds the `ChatProvider` port, DTOs, and error taxonomy, the
+is complete: B3.1 adds the `ChatProvider` port, DTOs, and error taxonomy, the
 OpenAI-compatible streaming adapter used for the Coarena/DeepSeek gateway, a deterministic
 fake provider for tests, and `python -m app.cli provider-check`; B3.2 adds the `chats` table
 and its migration, chat create/read/rename/soft-delete routes, opaque-cursor listing, and
@@ -23,7 +23,10 @@ the ownership rule that reports another account's chat as `404`; B3.3 adds the `
 table, cursor-paginated history, and the streamed reply endpoint that persists both turns,
 reserves and settles Credits, emits heartbeats, and refunds a failed reply; B3.4 detects a
 client disconnect, cancels the provider, persists the partial reply as `cancelled`, refunds
-its reservation, and rejects a repeated `clientId` with `409 duplicate_message`.
+its reservation, and rejects a repeated `clientId` with `409 duplicate_message`; B3.5
+verifies the real Coarena gateway with `provider-check` and one streamed
+`deepseek-v4-1-flash-1017` reply whose usage is persisted and whose Credit is committed
+from the reservation.
 
 ## Read first
 
