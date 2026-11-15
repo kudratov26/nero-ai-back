@@ -64,6 +64,9 @@ PROTECTED_ROUTES: tuple[RouteCase, ...] = (
     RouteCase("POST", "/v1/auth/password", 401, "unauthorized"),
     RouteCase("GET", "/v1/auth/sessions", 401, "unauthorized"),
     RouteCase("DELETE", "/v1/auth/sessions/{session_id}", 401, "unauthorized"),
+    RouteCase("GET", "/v1/credits", 401, "unauthorized"),
+    RouteCase("GET", "/v1/credits/ledger", 401, "unauthorized"),
+    RouteCase("POST", "/v1/account/plan", 401, "unauthorized"),
 )
 
 ROUTES: tuple[RouteCase, ...] = PUBLIC_ROUTES + PROTECTED_ROUTES

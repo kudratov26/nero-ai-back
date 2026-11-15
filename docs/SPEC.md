@@ -223,8 +223,9 @@ Seeded to match the frontend:
 Fields: `id`, `name`, `priceCents`, `monthlyCredits`, `tagline`, `features[]`,
 `highlighted`, `sortOrder`.
 
-Plan changes are simulated (`BILLING_MODE=simulated`). The endpoint is disabled unless
-`ALLOW_SIMULATED_PLAN_CHANGES=true`. Applying a plan:
+Plan changes are simulated; there is no payment provider in v1. The endpoint is enabled
+by default everywhere except production, and `ALLOW_SIMULATED_PLAN_CHANGES` forces it on
+or off. Applying a plan:
 
 1. locks the Credit account
 2. rejects the change with `409 conflict` while `held > 0`
@@ -295,14 +296,48 @@ with a single `reset` entry; when nothing changes it writes nothing.
 ### 7.3 Credit endpoints
 
 ```text
-GET  /v1/credits                  -> CreditsSummary
-GET  /v1/credits/ledger?cursor=   -> paginated ledger, own entries only
-POST /v1/account/plan             { planId } -> MeResponse (simulated only)
-POST /v1/demo/reset               -> 204, resets own workspace
+GET  /v1/credits                       -> CreditsSummary
+GET  /v1/credits/ledger?cursor=&limit= -> LedgerPage, own entries only
+POST /v1/account/plan   { planId }     -> MeResponse (simulated only)
+POST /v1/demo/reset                    -> 204, resets own workspace
 ```
 
 `CreditsSummary` is the `credits` object from `MeResponse`. Model costs are always read
 from the server catalog; the client never sends a cost.
+
+`GET /v1/credits/ledger` returns the caller's entries newest first as an opaque-cursor
+page. `limit` defaults to 20 and is capped at 100.
+
+```json
+{
+  "items": [
+    {
+      "id": "0193...",
+      "kind": "plan_change",
+      "deltaBalance": 950,
+      "deltaHeld": 0,
+      "balanceAfter": 1000,
+      "heldAfter": 0,
+      "reason": "Changed plan to Pro",
+      "refType": "plan",
+      "refId": null,
+      "createdAt": "2026-11-14T12:00:00Z"
+    }
+  ],
+  "nextCursor": "eyJjcmVhdGVkQXQiOiI..."
+}
+```
+
+`kind` is one of `grant`, `reserve`, `commit`, `refund`, `plan_change`, `adjustment`,
+`reset`; `refType` is `chat_message`, `generation`, `plan`, `demo_reset`, or `null`.
+`nextCursor` is `null` on the last page. The cursor is opaque; a malformed one is
+`400 invalid_request` with the detail `The cursor is not valid.` Entries are immutable and
+never deleted, so pages stay stable while new entries are appended.
+
+`POST /v1/account/plan` switches the plan and refills the account, then returns the new
+`MeResponse`. An unknown `planId` is `404 not_found`; a change while Credits are held is
+`409 conflict`; when plan changes are disabled the route is `404 not_found`. Plan changes
+are only a simulated refill and never touch a payment provider.
 
 Demo reset refunds any held Credits, deletes the user's Chats, Generations, Assets, and
 likes, then restores the current plan allowance with a `reset` ledger entry. It never

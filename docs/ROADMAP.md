@@ -107,11 +107,15 @@ append-only and no operation can make available Credits negative.
     cannot overspend, and ledger-entry assertions for every transition
     (`tests/integration/test_credits.py`).
 
-- [ ] **B2.3 Credit endpoints and simulated plan change**
-  - `GET /v1/credits`, `GET /v1/credits/ledger` (cursor pagination),
-    `POST /v1/account/plan`.
-  - Gate plan changes behind `ALLOW_SIMULATED_PLAN_CHANGES`.
-  - Acceptance: ledger pagination, plan refill, no-negative tests.
+- [x] **B2.3 Credit endpoints and simulated plan change**
+  - `GET /v1/credits` (summary), `GET /v1/credits/ledger` (opaque-cursor pagination,
+    newest first, own entries only), and `POST /v1/account/plan`.
+  - Plan changes are gated behind `ALLOW_SIMULATED_PLAN_CHANGES` and rejected with
+    `409 conflict` while Credits are held.
+  - Acceptance: ledger pagination by cursor, plan refill to the new allowance, the
+    no-negative invariant under a hold, and the route/auth matrix. Covered by
+    `tests/integration/test_billing.py`, `tests/unit/test_cursor.py`, and
+    `tests/unit/test_config.py`.
 
 - [ ] **B2.4 Idempotency foundation**
   - `idempotency_keys` table and helper service.

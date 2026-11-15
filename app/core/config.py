@@ -54,6 +54,10 @@ class Settings(BaseSettings):
     rate_limit_backend: RateLimitBackend = "memory"
     max_request_body_bytes: int = DEFAULT_MAX_BODY_BYTES
 
+    # Plan changes are simulated (no payment provider). The endpoint is disabled
+    # unless this is true; unset means allowed everywhere except production.
+    allow_simulated_plan_changes: bool | None = None
+
     # Model provider and generation mode. `GENERATION_MODE=live` without an image
     # or video adapter must not advertise those models; the catalog seed enforces it.
     ai_base_url: str | None = None
@@ -130,6 +134,18 @@ class Settings(BaseSettings):
         if self.cookie_secure is not None:
             return self.cookie_secure
         return self.is_production
+
+    @property
+    def simulated_plan_changes_allowed(self) -> bool:
+        """Whether `POST /v1/account/plan` is enabled.
+
+        v1 has no billing provider, so plan changes are a simulated refill. They
+        are allowed by default everywhere except production, and can be forced on
+        or off with `ALLOW_SIMULATED_PLAN_CHANGES`.
+        """
+        if self.allow_simulated_plan_changes is not None:
+            return self.allow_simulated_plan_changes
+        return not self.is_production
 
     @property
     def chat_provider_configured(self) -> bool:

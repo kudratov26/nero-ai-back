@@ -19,12 +19,11 @@ from app.api.deps import (
     get_rate_limiter,
     get_session_factory,
 )
+from app.api.responses import me_response, user_response
 from app.api.schemas.auth import (
-    CreditsSummary,
     LoginRequest,
     MeResponse,
     PasswordChangeRequest,
-    PlanSummary,
     SessionSummary,
     SignupRequest,
     UpdateProfileRequest,
@@ -32,9 +31,8 @@ from app.api.schemas.auth import (
 )
 from app.core.config import Settings
 from app.core.rate_limit import MemoryRateLimiter
-from app.db.models import User, UserSession
+from app.db.models import UserSession
 from app.domain import auth as auth_service
-from app.domain import credits as credits_service
 from app.domain.auth import AuthContext, IssuedSession, normalize_email
 
 # `docs/SPEC.md` section 15: login 5 per 15 minutes per IP + email, signup 3 per
@@ -86,16 +84,6 @@ def clear_session_cookie(response: Response, settings: Settings) -> None:
     )
 
 
-def _user_response(user: User) -> UserResponse:
-    return UserResponse(
-        id=user.id,
-        email=user.email,
-        display_name=user.display_name,
-        role=user.role,
-        created_at=user.created_at,
-    )
-
-
 def _session_response(row: UserSession, *, current_id: UUID) -> SessionSummary:
     return SessionSummary(
         id=row.id,
@@ -108,29 +96,9 @@ def _session_response(row: UserSession, *, current_id: UUID) -> SessionSummary:
     )
 
 
-def _me_response(context: AuthContext) -> MeResponse:
-    account = context.account
-    return MeResponse(
-        user=_user_response(context.user),
-        plan=PlanSummary(
-            id=context.plan.id,
-            name=context.plan.name,
-            monthly_credits=context.plan.monthly_credits,
-        ),
-        credits=CreditsSummary(
-            balance=account.balance,
-            held=account.held,
-            available=credits_service.available(account),
-            allowance=account.allowance,
-            period_start=account.period_start,
-            period_end=account.period_end,
-        ),
-    )
-
-
 def _issued_response(response: Response, settings: Settings, issued: IssuedSession) -> MeResponse:
     set_session_cookie(response, settings, issued.token)
-    return _me_response(issued)
+    return me_response(issued)
 
 
 @router.post(
@@ -232,7 +200,7 @@ async def logout(
 async def me(
     context: Annotated[AuthContext, Depends(get_current_auth)],
 ) -> MeResponse:
-    return _me_response(context)
+    return me_response(context)
 
 
 @router.patch(
@@ -251,7 +219,7 @@ async def update_me(
         user_id=context.user.id,
         display_name=body.display_name,
     )
-    return _user_response(user)
+    return user_response(user)
 
 
 @router.post(

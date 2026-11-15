@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import get_args
 from uuid import uuid4
 
 import pytest
 
+from app.api.schemas.credits import LedgerKind, LedgerRefType
 from app.db.models import CreditAccount
 from app.db.models.common import utcnow
+from app.db.models.credit import LEDGER_KINDS, LEDGER_REF_TYPES
 from app.domain.credits import available
 
 
@@ -31,3 +34,11 @@ def make_account(balance: int, held: int) -> CreditAccount:
 )
 def test_available_is_balance_minus_held(balance: int, held: int, expected: int) -> None:
     assert available(make_account(balance, held)) == expected
+
+
+def test_ledger_kind_literal_matches_the_model() -> None:
+    assert set(get_args(LedgerKind)) == set(LEDGER_KINDS)
+
+
+def test_ledger_ref_type_literal_matches_the_model() -> None:
+    assert set(get_args(LedgerRefType)) == set(LEDGER_REF_TYPES)
