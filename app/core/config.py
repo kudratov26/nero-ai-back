@@ -63,6 +63,7 @@ class Settings(BaseSettings):
     ai_base_url: str | None = None
     ai_api_key: str | None = None
     ai_chat_model: str = DEFAULT_CHAT_MODEL
+    ai_request_timeout_seconds: float = 120.0
     generation_mode: GenerationMode = "mock"
 
     @field_validator("log_level", mode="before")
@@ -104,6 +105,13 @@ class Settings(BaseSettings):
     def _validate_body_limit(cls, value: int) -> int:
         if value < 1:
             raise ValueError("MAX_REQUEST_BODY_BYTES must be at least 1")
+        return value
+
+    @field_validator("ai_request_timeout_seconds")
+    @classmethod
+    def _validate_ai_timeout(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("AI_REQUEST_TIMEOUT_SECONDS must be positive")
         return value
 
     @field_validator("rate_limit_backend")

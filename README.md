@@ -9,12 +9,15 @@ and Credit schema plus Argon2id and opaque session-token primitives; B1.2 provid
 adds profile and password updates, session listing and revocation, the Origin check on
 unsafe methods, login/signup rate limits, and the 1 MiB request body cap; B1.4 adds the
 authorization test matrix that fails when a route ships without an auth decision. Phase 2
-is in progress: B2.1 adds the `models` table, its migration, the seed step, and the public
+is complete: B2.1 adds the `models` table, its migration, the seed step, and the public
 `GET /v1/plans`, `GET /v1/models`, and `GET /v1/models/{id}` catalog reads; B2.2 adds the
 Credit ledger service (`reserve`, `commit`, `refund`, `grant`, `reset`) with row locking
 and an append-only ledger; B2.3 exposes `GET /v1/credits`, the cursor-paginated
 `GET /v1/credits/ledger`, and the simulated `POST /v1/account/plan`; B2.4 adds the
-`idempotency_keys` table and the create-once helper that replays a retried request.
+`idempotency_keys` table and the create-once helper that replays a retried request. Phase 3
+is in progress: B3.1 adds the `ChatProvider` port, DTOs, and error taxonomy, the
+OpenAI-compatible streaming adapter used for the Coarena/DeepSeek gateway, a deterministic
+fake provider for tests, and `python -m app.cli provider-check`.
 
 ## Read first
 
@@ -93,7 +96,7 @@ Worker (from Phase 5):
 uv run python -m app.worker
 ```
 
-Provider probe (after Phase 3):
+Provider probe (Phase 3):
 
 ```bash
 uv run python -m app.cli provider-check
@@ -111,7 +114,7 @@ app/
   storage/      asset persistence
   workers/      generation worker
 alembic/        migrations
-tests/          unit, integration, contract
+tests/          unit, integration, providers, contract
 docs/           spec, roadmap, ADRs, agent docs
 scripts/        seed and maintenance commands
 ```

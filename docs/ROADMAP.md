@@ -137,12 +137,16 @@ append-only and no operation can make available Credits negative.
 provider tests pass; disconnect and provider failure refund Credits; no duplicate message
 on retry.
 
-- [ ] **B3.1 Provider port and OpenAI-compatible adapter**
-  - `ChatProvider` protocol, DTOs, error taxonomy.
-  - Coarena/OpenAI-compatible adapter with httpx streaming, timeouts, first-token retry.
-  - `FakeChatProvider` for tests; `python -m app.cli provider-check`.
-  - Acceptance: respx tests for SSE parsing, 429, 5xx, timeout, malformed chunks; CLI
-    prints model/status/usage only.
+- [x] **B3.1 Provider port and OpenAI-compatible adapter**
+  - `ChatProvider` protocol, DTOs, and error taxonomy in `app/providers/base.py`.
+  - Coarena/OpenAI-compatible adapter (`app/providers/openai_compatible.py`) with httpx
+    streaming, connect/write/read timeouts, and a jittered retry that runs only before the
+    first delta; `FakeChatProvider` (`app/providers/fake.py`) for tests;
+    `python -m app.cli provider-check`.
+  - Acceptance: respx tests for SSE parsing, 429, 5xx, timeout, and malformed chunks; the
+    CLI prints model/status/usage only. Covered by `tests/providers/`,
+    `tests/unit/test_providers.py`, `tests/unit/test_cli.py`, and
+    `tests/unit/test_config.py`.
 
 - [ ] **B3.2 Chat CRUD**
   - `chats` table, migration, service, routes.
