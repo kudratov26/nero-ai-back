@@ -5,7 +5,8 @@ server-authoritative Credit ledger, Chats, Generations, Assets, and provider acc
 
 **Status:** Phase 0 complete. Phase 1 (accounts and sessions) is in progress:
 B1.1 provides the user, session, plan, and Credit schema plus Argon2id and opaque
-session-token primitives. Auth endpoints are B1.2.
+session-token primitives; B1.2 provides `signup`, `login`, `logout`, and `/v1/auth/me`
+with atomic Free-plan provisioning.
 
 ## Read first
 

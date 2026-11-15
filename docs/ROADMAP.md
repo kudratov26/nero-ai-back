@@ -60,7 +60,7 @@ revocation and origin checks are tested.
   - Acceptance: unit tests for hashing and token generation; migration runs clean; seed
     is idempotent.
 
-- [ ] **B1.2 Auth endpoints**
+- [x] **B1.2 Auth endpoints**
   - `POST /v1/auth/signup`, `login`, `logout`; `GET /v1/auth/me`.
   - Cookie flags per spec; rotate session on login; generic login errors.
   - Signup creates user, session, Free account, and the initial 50-Credit grant in one
@@ -312,7 +312,7 @@ B7.1 -> B7.2 -> B7.3 -> B7.4 (blocked on provider key)
 | Phase | Status |
 | --- | --- |
 | 0 Foundation | done |
-| 1 Accounts | in progress (B1.1 done) |
+| 1 Accounts | in progress (B1.1–B1.2 done) |
 | 2 Credits | not started |
 | 3 Chat | not started |
 | 4 Explore | not started |
