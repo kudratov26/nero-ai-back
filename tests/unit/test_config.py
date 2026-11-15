@@ -143,3 +143,28 @@ def test_empty_env_placeholders_become_none() -> None:
 
     assert settings.ai_base_url is None
     assert settings.ai_api_key is None
+
+
+def test_simulated_plan_changes_default_to_on_outside_production() -> None:
+    assert make_settings().simulated_plan_changes_allowed is True
+
+
+def test_simulated_plan_changes_default_to_off_in_production() -> None:
+    settings = make_settings(
+        app_env="production",
+        app_secret="a-real-production-secret",
+    )
+
+    assert settings.is_production is True
+    assert settings.simulated_plan_changes_allowed is False
+
+
+@pytest.mark.parametrize("allowed", [True, False])
+def test_simulated_plan_changes_can_be_forced(allowed: bool) -> None:
+    settings = make_settings(
+        app_env="production",
+        app_secret="a-real-production-secret",
+        allow_simulated_plan_changes=allowed,
+    )
+
+    assert settings.simulated_plan_changes_allowed is allowed

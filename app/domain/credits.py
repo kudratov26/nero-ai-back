@@ -13,19 +13,24 @@ and returns a clean `409 insufficient_credits` instead of a constraint failure.
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.problems import ApiError, ErrorCode
-from app.db.models import CreditAccount, CreditLedgerEntry
+from app.db.models import CreditAccount, CreditLedgerEntry, Plan
 
 RESERVE = "reserve"
 COMMIT = "commit"
 REFUND = "refund"
 GRANT = "grant"
 RESET = "reset"
+PLAN_CHANGE = "plan_change"
+
+#: Length of a billing period, in days. Signup and every plan change start one.
+PLAN_PERIOD_DAYS = 30
 
 
 def available(account: CreditAccount) -> int:
@@ -225,5 +230,42 @@ async def reset(
         reason=reason,
         ref_type=ref_type,
         ref_id=ref_id,
+    )
+    return account
+
+
+async def change_plan(
+    session: AsyncSession,
+    *,
+    user_id: UUID,
+    plan: Plan,
+    now: datetime,
+) -> CreditAccount:
+    """Switch the account to `plan`, refill it, and start a new period.
+
+    Rejected with `409 conflict` while Credits are held, so a plan change can never
+    strand an in-flight reservation. Refills `balance` to the new allowance.
+    """
+    account = await _lock_account(session, user_id)
+    if account.held > 0:
+        raise ApiError(
+            ErrorCode.CONFLICT,
+            409,
+            detail="Wait for in-flight work to finish before changing plans.",
+        )
+    delta_balance = plan.monthly_credits - account.balance
+    account.plan_id = plan.id
+    account.allowance = plan.monthly_credits
+    account.period_start = now
+    account.period_end = now + timedelta(days=PLAN_PERIOD_DAYS)
+    await _append(
+        session,
+        account,
+        kind=PLAN_CHANGE,
+        delta_balance=delta_balance,
+        delta_held=0,
+        reason=f"Changed plan to {plan.name}",
+        ref_type="plan",
+        ref_id=None,
     )
     return account

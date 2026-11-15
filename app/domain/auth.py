@@ -26,7 +26,6 @@ from app.db.session import session_scope
 from app.domain import credits
 
 FREE_PLAN_ID = "free"
-PLAN_PERIOD_DAYS = 30
 LAST_USED_UPDATE_INTERVAL = timedelta(minutes=5)
 MIN_PASSWORD_LENGTH = 10
 MAX_PASSWORD_LENGTH = 128
@@ -186,7 +185,7 @@ async def _provision_free_account(
         held=0,
         allowance=plan.monthly_credits,
         period_start=now,
-        period_end=now + timedelta(days=PLAN_PERIOD_DAYS),
+        period_end=now + timedelta(days=credits.PLAN_PERIOD_DAYS),
     )
     session.add(account)
     await session.flush()

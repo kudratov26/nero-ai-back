@@ -12,7 +12,8 @@ authorization test matrix that fails when a route ships without an auth decision
 is in progress: B2.1 adds the `models` table, its migration, the seed step, and the public
 `GET /v1/plans`, `GET /v1/models`, and `GET /v1/models/{id}` catalog reads; B2.2 adds the
 Credit ledger service (`reserve`, `commit`, `refund`, `grant`, `reset`) with row locking
-and an append-only ledger.
+and an append-only ledger; B2.3 exposes `GET /v1/credits`, the cursor-paginated
+`GET /v1/credits/ledger`, and the simulated `POST /v1/account/plan`.
 
 ## Read first
 
