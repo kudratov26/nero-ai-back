@@ -42,5 +42,8 @@ async def test_openapi_exposes_only_documented_routes(
         "/v1/auth/login",
         "/v1/auth/logout",
         "/v1/auth/me",
+        "/v1/auth/password",
+        "/v1/auth/sessions",
+        "/v1/auth/sessions/{session_id}",
     }
     assert schema["info"]["title"] == "Nero AI API"

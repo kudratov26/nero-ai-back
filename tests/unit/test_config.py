@@ -62,3 +62,21 @@ def test_production_defaults_to_secure_cookies() -> None:
 
 def test_cookie_secure_can_be_overridden_in_development() -> None:
     assert make_settings(cookie_secure=True).secure_cookies is True
+
+
+def test_body_limit_defaults_to_one_mib() -> None:
+    assert make_settings().max_request_body_bytes == 1_048_576
+
+
+def test_body_limit_must_be_positive() -> None:
+    with pytest.raises(ValidationError):
+        make_settings(max_request_body_bytes=0)
+
+
+def test_memory_rate_limit_backend_is_the_default() -> None:
+    assert make_settings().rate_limit_backend == "memory"
+
+
+def test_redis_rate_limit_backend_is_not_supported_yet() -> None:
+    with pytest.raises(ValidationError):
+        make_settings(rate_limit_backend="redis")

@@ -10,8 +10,10 @@ from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEV_APP_SECRET = "change-me-in-production"
+DEFAULT_MAX_BODY_BYTES = 1_048_576
 
 LogLevel = Literal["debug", "info", "warning", "error", "critical"]
+RateLimitBackend = Literal["memory", "redis"]
 
 
 class AppEnv(StrEnum):
@@ -47,6 +49,9 @@ class Settings(BaseSettings):
     session_ttl_days: int = 30
     cookie_secure: bool | None = None
 
+    rate_limit_backend: RateLimitBackend = "memory"
+    max_request_body_bytes: int = DEFAULT_MAX_BODY_BYTES
+
     @field_validator("log_level", mode="before")
     @classmethod
     def _normalize_log_level(cls, value: object) -> object:
@@ -57,6 +62,21 @@ class Settings(BaseSettings):
     def _validate_session_ttl(cls, value: int) -> int:
         if value < 1:
             raise ValueError("SESSION_TTL_DAYS must be at least 1")
+        return value
+
+    @field_validator("max_request_body_bytes")
+    @classmethod
+    def _validate_body_limit(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("MAX_REQUEST_BODY_BYTES must be at least 1")
+        return value
+
+    @field_validator("rate_limit_backend")
+    @classmethod
+    def _validate_rate_limit_backend(cls, value: str) -> str:
+        # Fail at startup rather than silently running unthrottled in a cluster.
+        if value == "redis":
+            raise ValueError("RATE_LIMIT_BACKEND=redis is not implemented yet")
         return value
 
     @model_validator(mode="after")
