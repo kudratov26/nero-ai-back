@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.cli import seed_catalog
 from app.core.config import Settings, get_settings
+from app.db.models import Model
 from app.db.seed import (
     CHAT_MESSAGE_CREDITS,
     IMAGE_CREDITS,
@@ -256,7 +257,10 @@ async def test_reseeding_is_idempotent(migrated_database: str, engine: AsyncEngi
 async def test_reseeding_drops_a_model_that_is_no_longer_configured(
     migrated_database: str, engine: AsyncEngine
 ) -> None:
-    """A changed chat slug must not leave the old one advertised."""
+    """A changed chat slug must not leave the old one advertised.
+
+    The row survives (chat history references it), but it stops being offered.
+    """
     first = make_settings(ai_chat_model="chat-model-a", **CONFIGURED_CHAT)
     await seed(engine, first)
     assert "chat-model-a" in {model["id"] for model in (await _listed(first)).json()}
@@ -268,6 +272,24 @@ async def test_reseeding_drops_a_model_that_is_no_longer_configured(
     listed = {model["id"] for model in (await _listed(second)).json()}
     assert "chat-model-b" in listed
     assert "chat-model-a" not in listed
+
+
+async def test_a_retired_model_still_exists_in_the_table(
+    migrated_database: str, engine: AsyncEngine
+) -> None:
+    """Retiring must not delete: old chats name the model that answered them."""
+    first = make_settings(ai_chat_model="chat-model-a", **CONFIGURED_CHAT)
+    await seed(engine, first)
+
+    second = make_settings(ai_chat_model="chat-model-b", **CONFIGURED_CHAT)
+    async with session_scope(create_session_factory(engine)) as session:
+        await upsert_models(session, second)
+
+    async with session_scope(create_session_factory(engine)) as session:
+        retired = await session.get(Model, "chat-model-a")
+
+    assert retired is not None
+    assert retired.available is False
 
 
 async def _listed(settings: Settings) -> httpx.Response:

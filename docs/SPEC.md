@@ -375,8 +375,10 @@ availability depends on configuration):
 - The Image and Video models are the deterministic `Demo` providers. They are available
   only when `GENERATION_MODE=mock`; the response carries `provider: "Demo"` so no caller
   can mistake them for real output.
-- Re-seeding refreshes rows and deletes models that are no longer configured, so a
-  changed `AI_CHAT_MODEL` never leaves the old slug advertised.
+- Re-seeding refreshes rows and retires models that are no longer configured: the row is
+  marked `available: false` rather than deleted, because Chats and Generations reference a
+  model with `ON DELETE RESTRICT`. A changed `AI_CHAT_MODEL` therefore never leaves the old
+  slug advertised, and history keeps naming the model that produced it.
 - Changing a price is a seed change plus an OpenAPI-visible catalog update.
 
 Seeded credits: chat message `1`, image `5`, video `15` for 5s and `30` for 10s.
@@ -448,6 +450,7 @@ chats
   id          uuid pk
   user_id     uuid fk
   title       text, default "New chat"
+  title_is_custom  boolean, default false
   model_id    text fk models
   created_at  timestamptz
   updated_at  timestamptz
@@ -469,10 +472,17 @@ messages
   updated_at   timestamptz
 ```
 
-Indexes: `(user_id, updated_at desc)` on chats where `deleted_at is null`;
+Indexes: `(user_id, updated_at, id)` on chats where `deleted_at is null`;
 `(chat_id, created_at)` on messages; unique `(chat_id, client_id)` where not null.
 
 Titles: first user message, trimmed to 60 characters, unless the user set one.
+`title_is_custom` records whether the caller chose the title; B3.3 derives a title from
+the first message only while it is false, so a rename is never overwritten.
+
+Deleting a chat is soft: `deleted_at` is set, the row and its messages stay, and every
+read and listing excludes it. A second `DELETE` is a no-op (`204`), so a retried delete
+succeeds. `chats.model_id` is `ON DELETE RESTRICT`, so retiring a model from the catalog
+marks it unavailable rather than deleting the row that history points at.
 
 ### 10.2 Endpoints
 
@@ -488,6 +498,19 @@ POST   /v1/chats/{id}/messages           -> text/event-stream, see 10.3
 
 Ownership is checked for every route. A missing chat and someone else's chat both return
 404 to avoid resource enumeration.
+
+Shapes (implemented in B3.2):
+
+```json
+{ "id": "0193...", "title": "Launch plan", "modelId": "deepseek-v4.1-flash",
+  "createdAt": "2026-11-15T12:00:00Z", "updatedAt": "2026-11-15T12:00:00Z" }
+```
+
+`POST /v1/chats` answers `422 model_unavailable` when `modelId` is unknown, not a chat
+model, or not currently advertised. `GET /v1/chats` is ordered by `updatedAt` descending
+with `id` as the tiebreaker, returns at most `limit` (1–100, default 20) items, and sets
+`nextCursor` only when another page exists. The cursor is opaque and escapes to the
+client, so a malformed one is `400 invalid_request`.
 
 ### 10.3 Streaming protocol
 

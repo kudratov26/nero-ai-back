@@ -6,6 +6,7 @@ Alembic autogenerate compares against.
 
 from __future__ import annotations
 
+from app.db.models.chat import Chat
 from app.db.models.credit import CreditAccount, CreditLedgerEntry
 from app.db.models.idempotency import IdempotencyKey
 from app.db.models.model import Model
@@ -14,6 +15,7 @@ from app.db.models.session import UserSession
 from app.db.models.user import User
 
 __all__ = [
+    "Chat",
     "CreditAccount",
     "CreditLedgerEntry",
     "IdempotencyKey",

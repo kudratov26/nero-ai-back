@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from app.api.auth import router as auth_router
 from app.api.body_limit import RequestBodyLimitMiddleware
 from app.api.catalog import router as catalog_router
+from app.api.chats import router as chats_router
 from app.api.credits import router as credits_router
 from app.api.csrf import OriginCheckMiddleware
 from app.api.health import router as health_router
@@ -57,6 +58,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(auth_router)
     app.include_router(catalog_router)
     app.include_router(credits_router)
+    app.include_router(chats_router)
     return app
 
 

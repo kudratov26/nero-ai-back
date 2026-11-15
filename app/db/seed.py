@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import delete
+from sqlalchemy import update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -215,12 +215,17 @@ def model_values(settings: Settings) -> list[dict[str, Any]]:
 
 
 async def upsert_models(session: AsyncSession, settings: Settings) -> None:
-    """Refresh the model catalog and drop rows that are no longer seeded.
+    """Refresh the model catalog and retire rows that are no longer seeded.
 
-    Deleting matters: if `AI_CHAT_MODEL` changes, the previous slug must not keep
-    being advertised. Later phases attach `ON DELETE RESTRICT` foreign keys from
-    Chats and Generations, so a referenced model makes this fail loudly instead of
-    silently orphaning work.
+    A model that drops out of the configuration must stop being advertised, so it
+    is marked unavailable. It is *retired*, not deleted: `chats.model_id` and the
+    Generations tables that arrive later reference a model with `ON DELETE
+    RESTRICT`, because a conversation has to keep naming the model that produced
+    it. Deleting would either fail once any chat exists or, worse, orphan history.
+
+    Availability and retirement therefore share one flag. That is deliberate: the
+    catalog already treats an unconfigured provider as "not offered", and a
+    retired model is the same thing from the client's point of view.
     """
     values = model_values(settings)
     ids = [row["id"] for row in values]
@@ -243,4 +248,6 @@ async def upsert_models(session: AsyncSession, settings: Settings) -> None:
         },
     )
     await session.execute(statement)
-    await session.execute(delete(Model).where(Model.id.notin_(ids)))
+    await session.execute(
+        update(Model).where(Model.id.notin_(ids), Model.available.is_(True)).values(available=False)
+    )

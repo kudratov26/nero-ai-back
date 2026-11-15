@@ -13,7 +13,7 @@ from sqlalchemy import select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.api.problems import ApiError, ErrorCode
-from app.core.cursor import InvalidCursorError, decode_cursor, encode_cursor
+from app.core.cursor import InvalidCursorError, decode_keyset, encode_keyset
 from app.db.models import CreditAccount, CreditLedgerEntry, Plan, User
 from app.db.session import session_scope
 from app.domain import credits
@@ -26,24 +26,11 @@ INVALID_CURSOR_DETAIL = "The cursor is not valid."
 UNAUTHORIZED_DETAIL = "Authentication required."
 
 
-def _cursor_for(entry: CreditLedgerEntry) -> str:
-    return encode_cursor({"createdAt": _iso(entry.created_at), "id": str(entry.id)})
-
-
-def _iso(value: datetime) -> str:
-    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
-
-
 def _decode_ledger_cursor(cursor: str) -> tuple[datetime, UUID]:
     try:
-        data = decode_cursor(cursor)
-        created_at = datetime.fromisoformat(str(data["createdAt"]))
-        entry_id = UUID(str(data["id"]))
-    except (InvalidCursorError, KeyError, ValueError) as exc:
+        return decode_keyset(cursor)
+    except InvalidCursorError as exc:
         raise ApiError(ErrorCode.INVALID_REQUEST, 400, detail=INVALID_CURSOR_DETAIL) from exc
-    if created_at.tzinfo is None:
-        raise ApiError(ErrorCode.INVALID_REQUEST, 400, detail=INVALID_CURSOR_DETAIL)
-    return created_at, entry_id
 
 
 async def list_ledger(
@@ -75,7 +62,7 @@ async def list_ledger(
 
     has_more = len(rows) > limit
     page = rows[:limit]
-    next_cursor = _cursor_for(page[-1]) if has_more and page else None
+    next_cursor = encode_keyset(page[-1].created_at, page[-1].id) if has_more and page else None
     return page, next_cursor
 
 
