@@ -174,10 +174,13 @@ on retry.
     Covered by `tests/integration/test_messages.py`; the duplicate code is in
     `app/api/problems.py`.
 
-- [ ] **B3.5 Real-provider smoke (human-assisted)**
+- [x] **B3.5 Real-provider smoke (human-assisted)**
   - Run `provider-check` and one streamed chat with the real key in a local environment.
   - Record the model slug and latency in the PR; never record the key or prompt content.
   - Acceptance: chat completes and usage is stored; key remains only in `.env`.
+    Verified against `deepseek-v4-1-flash-1017`: `provider-check` returned `status=ok`,
+    and a `curl` stream emitted `message.started`, deltas, `message.completed`, and
+    `done`; history stored usage and the ledger recorded `reserve` then `commit`.
 
 ---
 
