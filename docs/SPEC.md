@@ -181,6 +181,33 @@ DELETE /v1/auth/sessions/{id}                                  -> 204
 Signup grants the Free plan allowance in the same transaction. Login failures return a
 generic `401 invalid_credentials` regardless of whether the email exists.
 
+`GET /v1/auth/sessions` returns the caller's live sessions, newest first:
+
+```json
+[
+  {
+    "id": "0193...",
+    "userAgent": "Mozilla/5.0 ...",
+    "ip": "203.0.113.7",
+    "createdAt": "2026-11-14T12:00:00Z",
+    "lastUsedAt": "2026-11-14T12:05:00Z",
+    "expiresAt": "2026-12-14T12:00:00Z",
+    "current": true
+  }
+]
+```
+
+`DELETE /v1/auth/sessions/{id}` revokes one session and is idempotent; an id that
+belongs to another user is `404 not_found`. Revoking the current session also clears
+the cookie.
+
+`PATCH /v1/auth/me` takes `{ displayName }` and returns the `User` object. `POST
+/v1/auth/password` takes `{ currentPassword, newPassword }`, returns `204` with a
+replacement cookie, and revokes every other session. A wrong current password is
+`403 forbidden`.
+
+Rate-limited responses carry `Retry-After` in seconds.
+
 ## 7. Plans and Credits
 
 ### 7.1 Plans
@@ -635,6 +662,7 @@ Environment variables (validated at startup; fail fast on missing required value
 | `STORAGE_BACKEND` | no | `local` | local or s3 |
 | `ALLOW_SIMULATED_PLAN_CHANGES` | no | `true` in dev | false in production |
 | `RATE_LIMIT_BACKEND` | no | `memory` | memory or redis |
+| `MAX_REQUEST_BODY_BYTES` | no | `1048576` | 1 MiB request body cap |
 | `LOG_LEVEL` | no | `info` | |
 | `SENTRY_DSN` | no | — | optional |
 
@@ -650,6 +678,8 @@ Environment variables (validated at startup; fail fast on missing required value
 - Body limit 1 MiB; prompt limit 4000 characters.
 - Login rate limit: 5 attempts per 15 minutes per IP + email. Signup: 3 per hour per IP.
   Chat: 30 messages per minute per user. Generations: 10 per minute per user.
+  Limits are enforced in-process on a single instance; `RATE_LIMIT_BACKEND=redis` must
+  be implemented before running more than one.
 - Authorization: every query is scoped by user id. Public routes are explicitly listed.
 - Provider URLs come from configuration only (no SSRF surface).
 - Secrets are redacted from logs and error responses. Authorization headers are never

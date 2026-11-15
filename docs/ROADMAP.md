@@ -68,7 +68,7 @@ revocation and origin checks are tested.
   - Acceptance: integration tests for success, duplicate email, wrong password,
     disabled user, cookie flags, and rollback when provisioning fails.
 
-- [ ] **B1.3 Session hardening**
+- [x] **B1.3 Session hardening**
   - `PATCH /v1/auth/me`, `POST /v1/auth/password`, list/revoke sessions.
   - Origin check on unsafe methods; login and signup rate limits.
   - Password change revokes other sessions.
@@ -312,7 +312,7 @@ B7.1 -> B7.2 -> B7.3 -> B7.4 (blocked on provider key)
 | Phase | Status |
 | --- | --- |
 | 0 Foundation | done |
-| 1 Accounts | in progress (B1.1–B1.2 done) |
+| 1 Accounts | in progress (B1.1–B1.3 done) |
 | 2 Credits | not started |
 | 3 Chat | not started |
 | 4 Explore | not started |

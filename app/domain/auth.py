@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -32,6 +32,8 @@ MAX_PASSWORD_LENGTH = 128
 
 INVALID_CREDENTIALS_DETAIL = "Email or password is incorrect."
 UNAUTHORIZED_DETAIL = "Authentication required."
+WRONG_PASSWORD_DETAIL = "Current password is incorrect."
+SESSION_NOT_FOUND_DETAIL = "That session does not exist."
 
 # Verified against when the email is unknown so login takes the same path.
 _DUMMY_PASSWORD_HASH = (
@@ -113,6 +115,11 @@ def _invalid_credentials() -> ApiError:
 
 def _unauthorized() -> ApiError:
     return ApiError(ErrorCode.UNAUTHORIZED, 401, detail=UNAUTHORIZED_DETAIL)
+
+
+def _wrong_password() -> ApiError:
+    # 403, not 401: the caller is authenticated, only the confirmation failed.
+    return ApiError(ErrorCode.FORBIDDEN, 403, detail=WRONG_PASSWORD_DETAIL)
 
 
 def _new_session(
@@ -359,4 +366,123 @@ async def logout(
             )
         )
         if row is not None:
+            row.revoked_at = now
+
+
+async def _active_session(
+    session: AsyncSession,
+    *,
+    token: str,
+    now: datetime,
+) -> tuple[UserSession, User]:
+    """Load the live session behind a token together with its active user."""
+    row = (
+        await session.execute(
+            select(UserSession, User)
+            .join(User, User.id == UserSession.user_id)
+            .where(
+                UserSession.token_hash == hash_session_token(token),
+                UserSession.revoked_at.is_(None),
+                UserSession.expires_at > now,
+                User.status == "active",
+            )
+        )
+    ).first()
+    if row is None:
+        raise _unauthorized()
+    return row
+
+
+async def update_display_name(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    user_id: UUID,
+    display_name: str,
+) -> User:
+    """Rename the account. The request schema trims and bounds the value."""
+    async with session_scope(session_factory) as session:
+        user = await session.get(User, user_id)
+        if user is None:
+            raise _unauthorized()
+        user.display_name = display_name
+        await session.flush()
+        return user
+
+
+async def change_password(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    token: str | None,
+    current_password: str,
+    new_password: str,
+) -> str:
+    """Set a new password, rotate the caller's session, revoke the others.
+
+    Returns the replacement token for the caller's cookie. Every other live
+    session is revoked, so a stolen cookie stops working.
+    """
+    if not token:
+        raise _unauthorized()
+    now = datetime.now(tz=UTC)
+    async with session_scope(session_factory) as session:
+        session_row, user = await _active_session(session, token=token, now=now)
+        if not verify_password(current_password, user.password_hash):
+            raise _wrong_password()
+        validate_password(new_password, user.email)
+
+        user.password_hash = hash_password(new_password)
+        new_token = generate_session_token()
+        session_row.token_hash = hash_session_token(new_token)
+        session_row.last_used_at = now
+        await session.execute(
+            update(UserSession)
+            .where(
+                UserSession.user_id == user.id,
+                UserSession.id != session_row.id,
+                UserSession.revoked_at.is_(None),
+            )
+            .values(revoked_at=now)
+            .execution_options(synchronize_session=False)
+        )
+        return new_token
+
+
+async def list_sessions(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    user_id: UUID,
+) -> list[UserSession]:
+    """Return the caller's live sessions, newest first."""
+    now = datetime.now(tz=UTC)
+    async with session_scope(session_factory) as session:
+        rows = await session.scalars(
+            select(UserSession)
+            .where(
+                UserSession.user_id == user_id,
+                UserSession.revoked_at.is_(None),
+                UserSession.expires_at > now,
+            )
+            .order_by(UserSession.created_at.desc(), UserSession.id.desc())
+        )
+        return list(rows)
+
+
+async def revoke_session(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    user_id: UUID,
+    session_id: UUID,
+) -> None:
+    """Revoke one of the caller's sessions. Repeating the call is a no-op."""
+    now = datetime.now(tz=UTC)
+    async with session_scope(session_factory) as session:
+        row = await session.scalar(
+            select(UserSession).where(
+                UserSession.id == session_id,
+                UserSession.user_id == user_id,
+            )
+        )
+        if row is None:
+            raise ApiError(ErrorCode.NOT_FOUND, 404, detail=SESSION_NOT_FOUND_DETAIL)
+        if row.revoked_at is None:
             row.revoked_at = now

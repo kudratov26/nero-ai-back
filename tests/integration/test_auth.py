@@ -17,9 +17,8 @@ from app.db.models import CreditAccount, CreditLedgerEntry, User, UserSession
 from app.db.session import create_session_factory
 from app.domain import auth as auth_service
 from app.main import create_app
-from tests.support import asgi_client, make_settings
+from tests.support import PASSWORD, asgi_client, assert_problem, make_settings, post_signup
 
-PASSWORD = "correct horse battery"
 EXPECTED_COOKIE_MAX_AGE = 30 * 24 * 60 * 60
 
 
@@ -27,29 +26,6 @@ EXPECTED_COOKIE_MAX_AGE = 30 * 24 * 60 * 60
 async def client(migrated_database: str) -> AsyncIterator[httpx.AsyncClient]:
     async with asgi_client(create_app(make_settings())) as http:
         yield http
-
-
-async def post_signup(
-    client: httpx.AsyncClient,
-    email: str,
-    *,
-    password: str = PASSWORD,
-    display_name: str | None = "Creator",
-) -> httpx.Response:
-    payload: dict[str, str] = {"email": email, "password": password}
-    if display_name is not None:
-        payload["displayName"] = display_name
-    return await client.post("/v1/auth/signup", json=payload)
-
-
-def assert_problem(response: httpx.Response, status: int, code: str) -> dict[str, Any]:
-    assert response.status_code == status
-    assert response.headers["content-type"] == "application/problem+json"
-    body: dict[str, Any] = response.json()
-    assert body["status"] == status
-    assert body["code"] == code
-    assert body["requestId"]
-    return body
 
 
 async def session_rows(db_session: AsyncSession, user_id: UUID) -> list[UserSession]:

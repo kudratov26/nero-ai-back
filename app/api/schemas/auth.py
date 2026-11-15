@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import Annotated
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, PlainSerializer
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, PlainSerializer, field_validator
 from pydantic.alias_generators import to_camel
 
 
@@ -42,12 +42,39 @@ class LoginRequest(CamelRequest):
     password: str
 
 
+class UpdateProfileRequest(CamelRequest):
+    display_name: str = Field(min_length=1, max_length=80)
+
+    @field_validator("display_name")
+    @classmethod
+    def _require_visible_name(cls, value: str) -> str:
+        trimmed = value.strip()
+        if not trimmed:
+            raise ValueError("display name cannot be blank")
+        return trimmed
+
+
+class PasswordChangeRequest(CamelRequest):
+    current_password: str
+    new_password: str
+
+
 class UserResponse(CamelModel):
     id: UUID
     email: str
     display_name: str
     role: str
     created_at: UtcDatetime
+
+
+class SessionSummary(CamelModel):
+    id: UUID
+    user_agent: str | None
+    ip: str | None
+    created_at: UtcDatetime
+    last_used_at: UtcDatetime
+    expires_at: UtcDatetime
+    current: bool
 
 
 class PlanSummary(CamelModel):

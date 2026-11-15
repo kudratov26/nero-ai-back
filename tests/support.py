@@ -19,6 +19,8 @@ TEST_DATABASE_URL = os.environ.get(
     "postgresql+asyncpg://nero:nero@localhost:5432/nero_test",
 )
 TEST_SECRET = "test-secret-not-for-production"
+TEST_ORIGIN = "http://localhost:3000"
+PASSWORD = "correct horse battery"
 
 
 def make_settings(**overrides: Any) -> Settings:
@@ -33,13 +35,49 @@ def make_settings(**overrides: Any) -> Settings:
     return Settings(_env_file=None, **values)
 
 
+def assert_problem(response: httpx.Response, status: int, code: str) -> dict[str, Any]:
+    """Assert the RFC 9457 shape and return the parsed body."""
+    assert response.status_code == status
+    assert response.headers["content-type"] == "application/problem+json"
+    body: dict[str, Any] = response.json()
+    assert body["status"] == status
+    assert body["code"] == code
+    assert body["requestId"]
+    return body
+
+
+async def post_signup(
+    client: httpx.AsyncClient,
+    email: str,
+    *,
+    password: str = PASSWORD,
+    display_name: str | None = "Creator",
+) -> httpx.Response:
+    payload: dict[str, str] = {"email": email, "password": password}
+    if display_name is not None:
+        payload["displayName"] = display_name
+    return await client.post("/v1/auth/signup", json=payload)
+
+
 @asynccontextmanager
-async def asgi_client(app: FastAPI) -> AsyncIterator[httpx.AsyncClient]:
-    """HTTP client that runs the app's lifespan (engine setup and disposal)."""
+async def asgi_client(
+    app: FastAPI,
+    *,
+    origin: str | None = TEST_ORIGIN,
+    headers: dict[str, str] | None = None,
+) -> AsyncIterator[httpx.AsyncClient]:
+    """HTTP client that runs the app's lifespan (engine setup and disposal).
+
+    Sends the allowlisted `Origin` by default because unsafe methods require it;
+    pass `origin=None` to exercise the missing-header path.
+    """
+    merged = dict(headers or {})
+    if origin is not None:
+        merged.setdefault("origin", origin)
     transport = httpx.ASGITransport(app=app)
     async with (
         app.router.lifespan_context(app),
-        httpx.AsyncClient(transport=transport, base_url="http://test") as client,
+        httpx.AsyncClient(transport=transport, base_url="http://test", headers=merged) as client,
     ):
         yield client
 

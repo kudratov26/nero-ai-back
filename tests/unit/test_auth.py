@@ -10,7 +10,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from app.api.auth import clear_session_cookie, set_session_cookie
-from app.api.deps import get_session_factory
+from app.api.deps import get_rate_limiter, get_session_factory
 from app.api.problems import ApiError, ErrorCode
 from app.domain.auth import (
     display_name_for,
@@ -107,14 +107,14 @@ def test_clear_session_cookie_expires_it() -> None:
     assert "httponly" in lowered
 
 
-def test_session_factory_requires_an_initialized_app() -> None:
-    scope: dict[str, Any] = {
+def _bare_scope(path: str) -> dict[str, Any]:
+    return {
         "type": "http",
         "http_version": "1.1",
         "method": "GET",
         "scheme": "http",
-        "path": "/v1/auth/me",
-        "raw_path": b"/v1/auth/me",
+        "path": path,
+        "raw_path": path.encode("utf-8"),
         "query_string": b"",
         "root_path": "",
         "headers": [],
@@ -123,5 +123,12 @@ def test_session_factory_requires_an_initialized_app() -> None:
         "app": SimpleNamespace(state=SimpleNamespace()),
     }
 
+
+def test_session_factory_requires_an_initialized_app() -> None:
     with pytest.raises(RuntimeError):
-        get_session_factory(Request(scope))
+        get_session_factory(Request(_bare_scope("/v1/auth/me")))
+
+
+def test_rate_limiter_requires_an_initialized_app() -> None:
+    with pytest.raises(RuntimeError):
+        get_rate_limiter(Request(_bare_scope("/v1/auth/login")))
