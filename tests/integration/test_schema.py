@@ -17,6 +17,7 @@ from app.db.models import (
     CreditAccount,
     CreditLedgerEntry,
     IdempotencyKey,
+    Message,
     Model,
     Plan,
     User,
@@ -126,6 +127,18 @@ def make_chat(user_id: UUID, **overrides: Any) -> Chat:
     }
     values.update(overrides)
     return Chat(**values)
+
+
+def make_message(user_id: UUID, chat_id: UUID, **overrides: Any) -> Message:
+    values: dict[str, Any] = {
+        "user_id": user_id,
+        "chat_id": chat_id,
+        "role": "user",
+        "content": "Give me three campaign angles.",
+        "status": "complete",
+    }
+    values.update(overrides)
+    return Message(**values)
 
 
 async def add_model(session: AsyncSession, **overrides: Any) -> Model:
@@ -575,5 +588,159 @@ async def test_deleting_a_user_cascades_chats(db_session: AsyncSession) -> None:
 
     count = await db_session.scalar(
         select(func.count()).select_from(Chat).where(Chat.user_id == user_id)
+    )
+    assert count == 0
+
+
+# --- Messages ----------------------------------------------------------------
+
+
+async def test_message_accepts_valid_state(db_session: AsyncSession) -> None:
+    user = await add_user(db_session)
+    await add_model(db_session)
+    chat = make_chat(user.id)
+    db_session.add(chat)
+    await db_session.flush()
+
+    message = make_message(
+        user.id,
+        chat.id,
+        role="assistant",
+        content="Three angles.",
+        model_id="test-model",
+        status="complete",
+        prompt_tokens=12,
+        completion_tokens=80,
+        client_id="c-1",
+    )
+    db_session.add(message)
+
+    await db_session.flush()
+    await db_session.refresh(message)
+
+    assert message.role == "assistant"
+    assert message.status == "complete"
+    assert (message.prompt_tokens, message.completion_tokens) == (12, 80)
+    assert message.client_id == "c-1"
+    assert message.created_at.tzinfo is not None
+    assert message.created_at.utcoffset() == timedelta(0)
+    assert message.updated_at.tzinfo is not None
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"role": "tool"},
+        {"status": "pending"},
+        {"prompt_tokens": -1},
+        {"completion_tokens": -1},
+        {"client_id": "   "},
+    ],
+)
+async def test_message_constraints(db_session: AsyncSession, overrides: dict[str, Any]) -> None:
+    user = await add_user(db_session)
+    await add_model(db_session)
+    chat = make_chat(user.id)
+    db_session.add(chat)
+    await db_session.flush()
+
+    db_session.add(make_message(user.id, chat.id, **overrides))
+
+    with pytest.raises(IntegrityError):
+        await db_session.flush()
+
+
+async def test_message_client_id_is_unique_per_chat(db_session: AsyncSession) -> None:
+    user = await add_user(db_session)
+    await add_model(db_session)
+    chat = make_chat(user.id)
+    db_session.add(chat)
+    await db_session.flush()
+    db_session.add(make_message(user.id, chat.id, client_id="c-1"))
+    await db_session.flush()
+
+    db_session.add(make_message(user.id, chat.id, client_id="c-1"))
+
+    with pytest.raises(IntegrityError):
+        await db_session.flush()
+
+
+async def test_the_same_client_id_may_be_used_in_another_chat(db_session: AsyncSession) -> None:
+    user = await add_user(db_session)
+    await add_model(db_session)
+    first = make_chat(user.id, title="First")
+    second = make_chat(user.id, title="Second")
+    db_session.add_all([first, second])
+    await db_session.flush()
+
+    db_session.add_all(
+        [
+            make_message(user.id, first.id, client_id="c-1"),
+            make_message(user.id, second.id, client_id="c-1"),
+        ]
+    )
+
+    await db_session.flush()
+
+
+async def test_a_message_must_name_an_existing_chat(db_session: AsyncSession) -> None:
+    user = await add_user(db_session)
+    db_session.add(make_message(user.id, uuid4()))
+
+    with pytest.raises(IntegrityError):
+        await db_session.flush()
+
+
+async def test_a_message_model_cannot_be_deleted(db_session: AsyncSession) -> None:
+    """History keeps the model that produced it, even if the chat names another."""
+    user = await add_user(db_session)
+    await add_model(db_session)
+    other = await add_model(db_session, id="other-model")
+    chat = make_chat(user.id)
+    db_session.add(chat)
+    await db_session.flush()
+    db_session.add(make_message(user.id, chat.id, role="assistant", model_id=other.id))
+    await db_session.flush()
+
+    await db_session.delete(other)
+
+    with pytest.raises(IntegrityError):
+        await db_session.flush()
+
+
+async def test_deleting_a_user_cascades_messages(db_session: AsyncSession) -> None:
+    user = await add_user(db_session)
+    await add_model(db_session)
+    chat = make_chat(user.id)
+    db_session.add(chat)
+    await db_session.flush()
+    db_session.add(make_message(user.id, chat.id))
+    await db_session.flush()
+    user_id = user.id
+
+    await db_session.delete(user)
+    await db_session.flush()
+
+    count = await db_session.scalar(
+        select(func.count()).select_from(Message).where(Message.user_id == user_id)
+    )
+    assert count == 0
+
+
+async def test_deleting_a_chat_cascades_messages(db_session: AsyncSession) -> None:
+    user = await add_user(db_session)
+    await add_model(db_session)
+    chat = make_chat(user.id)
+    db_session.add(chat)
+    await db_session.flush()
+    db_session.add(make_message(user.id, chat.id))
+    await db_session.flush()
+    chat_id = chat.id
+
+    await db_session.delete(chat)
+    await db_session.flush()
+
+    count = await db_session.scalar(
+        select(func.count()).select_from(Message).where(Message.chat_id == chat_id)
     )
     assert count == 0

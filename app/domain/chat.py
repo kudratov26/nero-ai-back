@@ -5,7 +5,8 @@ from one that does not exist: both are `404 not_found`. That is the only safe
 answer, because a `403` would confirm the row exists.
 
 Chats own their transaction here. Nothing in this module calls a provider or
-moves Credits; that arrives with messages in B3.3.
+moves Credits; messages and their streamed replies live in
+`app.domain.messages`.
 """
 
 from __future__ import annotations

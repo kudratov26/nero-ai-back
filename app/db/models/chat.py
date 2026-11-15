@@ -1,8 +1,9 @@
 """Chats: one persisted conversation owned by one user.
 
-Messages arrive in B3.3; this table exists now so chat CRUD has somewhere to
-live. A chat is soft-deleted, never removed, so a client that reconnects cannot
-resurrect history it already hid from itself.
+Messages live in the sibling `messages` table; a chat exists first so the client
+can pick a model and the first user turn can derive its title. A chat is
+soft-deleted, never removed, so a client that reconnects cannot resurrect history
+it already hid from itself.
 """
 
 from __future__ import annotations

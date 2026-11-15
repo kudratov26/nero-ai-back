@@ -499,12 +499,27 @@ POST   /v1/chats/{id}/messages           -> text/event-stream, see 10.3
 Ownership is checked for every route. A missing chat and someone else's chat both return
 404 to avoid resource enumeration.
 
-Shapes (implemented in B3.2):
+Shapes (implemented in B3.2 and B3.3):
 
 ```json
 { "id": "0193...", "title": "Launch plan", "modelId": "deepseek-v4.1-flash",
   "createdAt": "2026-11-15T12:00:00Z", "updatedAt": "2026-11-15T12:00:00Z" }
 ```
+
+A `Message` carries the persisted turn, including a partial failed reply and its mapped
+error code:
+
+```json
+{ "id": "0193...", "role": "assistant", "content": "Shoot the campaign",
+  "modelId": "deepseek-v4.1-flash", "status": "complete", "promptTokens": 12,
+  "completionTokens": 80, "errorCode": null, "clientId": null,
+  "createdAt": "2026-11-15T12:00:00Z", "updatedAt": "2026-11-15T12:00:01Z" }
+```
+
+`role` is `system`, `user`, or `assistant`; `status` is `complete`, `streaming`, `failed`,
+or `cancelled`. `modelId` is null on user turns and names the model that produced an
+assistant turn. Usage fields are null when the provider does not report them. A user turn
+may carry the client's `clientId`; an assistant turn never does.
 
 `POST /v1/chats` answers `422 model_unavailable` when `modelId` is unknown, not a chat
 model, or not currently advertised. `GET /v1/chats` is ordered by `updatedAt` descending
@@ -512,13 +527,31 @@ with `id` as the tiebreaker, returns at most `limit` (1–100, default 20) items
 `nextCursor` only when another page exists. The cursor is opaque and escapes to the
 client, so a malformed one is `400 invalid_request`.
 
+`GET /v1/chats/{id}/messages` is ordered by `createdAt` descending with `id` as the
+tiebreaker, so a page reads newest first. `before` is the opaque `nextCursor` of the
+previous page. `limit` is 1–100 with a default of 50, and `nextCursor` is null when there
+is nothing older. Failed and partial assistant turns are included so a client can render
+what the model produced before the failure. A malformed cursor is `400 invalid_request`;
+a missing or foreign chat is `404 not_found`.
+
+`POST /v1/chats/{id}/messages` accepts `content` (1–4000 characters, not blank),
+`clientId` (up to 120 characters, optional), and `modelId` (optional). When `modelId` is
+present it must match the chat's model, otherwise the response is `400 invalid_request`.
+The server checks the chat, the model's current availability, the provider configuration,
+and Credits before it returns `200`; each failure is a normal JSON problem response
+(`404 not_found`, `422 model_unavailable`, or `409 insufficient_credits`).
+
 ### 10.3 Streaming protocol
 
 Request:
 
 ```json
-{ "content": "Give me three campaign angles.", "modelId": "deepseek-v4-1-flash", "clientId": "c-1" }
+{ "content": "Give me three campaign angles.", "modelId": "deepseek-v4.1-flash", "clientId": "c-1" }
 ```
+
+`content` is required and limited to 4000 characters. `clientId` is optional; it is
+stored on the user turn and is unique per chat. `modelId` is optional and must equal the
+chat's model when sent.
 
 Headers: `Accept: text/event-stream`, `Idempotency-Key: <uuid>` optional.
 
@@ -549,11 +582,14 @@ event: message.failed
 data: {"messageId":"...","code":"provider_timeout","detail":"The model did not respond.","refunded":true}
 ```
 
+A failure is terminal: `message.failed` is the last event and no `done` follows.
+
 Rules:
 
 - Persist the user message and an assistant placeholder before calling the provider.
 - Reserve Credits before the provider call; commit on `message.completed`; refund on
-  failure or client disconnect before completion.
+  failure or client disconnect before completion. A failed stream stores the partial
+  content, `status=failed`, and the mapped `errorCode` before the refund commits.
 - On disconnect, cancel the provider request and mark the assistant message `cancelled`.
 - Send a heartbeat comment (`: ping`) every 15 seconds.
 - No resume/replay in v1. If a client retries with the same `(chatId, clientId)`, return

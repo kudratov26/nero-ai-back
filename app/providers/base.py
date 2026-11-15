@@ -69,7 +69,8 @@ class ChatProvider(Protocol):
     """A streaming chat backend.
 
     Implementations are async generators: an adapter yields `ChatDelta`s as they
-    arrive and raises a `ProviderError` subclass on failure.
+    arrive and raises a `ProviderError` subclass on failure. `aclose` releases
+    any pooled transport and runs when the application shuts down.
     """
 
     def stream_chat(
@@ -79,6 +80,8 @@ class ChatProvider(Protocol):
         model: ProviderModel,
         params: ChatParams,
     ) -> AsyncIterator[ChatDelta]: ...
+
+    async def aclose(self) -> None: ...
 
 
 class ProviderError(Exception):

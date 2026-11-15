@@ -85,6 +85,14 @@ PROTECTED_ROUTES: tuple[RouteCase, ...] = (
         probe_body={"title": "Probe"},
     ),
     RouteCase("DELETE", "/v1/chats/{chat_id}", 401, "unauthorized"),
+    RouteCase("GET", "/v1/chats/{chat_id}/messages", 401, "unauthorized"),
+    RouteCase(
+        "POST",
+        "/v1/chats/{chat_id}/messages",
+        401,
+        "unauthorized",
+        probe_body={"content": "Probe"},
+    ),
 )
 
 ROUTES: tuple[RouteCase, ...] = PUBLIC_ROUTES + PROTECTED_ROUTES
