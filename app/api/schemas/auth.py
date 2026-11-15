@@ -2,33 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-from typing import Annotated
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, PlainSerializer, field_validator
-from pydantic.alias_generators import to_camel
+from pydantic import EmailStr, Field, field_validator
 
-
-def _serialize_utc(value: datetime) -> str:
-    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
-
-
-UtcDatetime = Annotated[datetime, PlainSerializer(_serialize_utc, return_type=str)]
-
-
-class CamelModel(BaseModel):
-    """camelCase at the HTTP boundary, snake_case in Python."""
-
-    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
-
-
-class CamelRequest(CamelModel):
-    model_config = ConfigDict(
-        alias_generator=to_camel,
-        populate_by_name=True,
-        extra="forbid",
-    )
+from app.api.schemas.base import CamelModel, CamelRequest, UtcDatetime
 
 
 class SignupRequest(CamelRequest):

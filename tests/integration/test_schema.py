@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import generate_session_token, hash_session_token
-from app.db.models import CreditAccount, CreditLedgerEntry, Plan, User, UserSession
+from app.db.models import CreditAccount, CreditLedgerEntry, Model, Plan, User, UserSession
 from app.db.models.common import utcnow
 from app.db.seed import PLAN_SEEDS, plan_values, upsert_plans
 
@@ -75,6 +75,26 @@ def make_session(user_id: UUID, **overrides: Any) -> UserSession:
     }
     values.update(overrides)
     return UserSession(**values)
+
+
+def make_model(**overrides: Any) -> Model:
+    values: dict[str, Any] = {
+        "id": "test-model",
+        "name": "Test Model",
+        "provider": "Test",
+        "provider_model_id": "test-model",
+        "modality": "chat",
+        "description": "A model used by the schema tests.",
+        "badge": None,
+        "credit_cost": 1,
+        "credit_cost_10s": None,
+        "capabilities": {"streaming": True},
+        "context_window": 128_000,
+        "available": True,
+        "sort_order": 0,
+    }
+    values.update(overrides)
+    return Model(**values)
 
 
 async def add_user(session: AsyncSession, **overrides: Any) -> User:
@@ -301,3 +321,77 @@ async def test_deleting_a_user_cascades_owned_rows(db_session: AsyncSession) -> 
             select(func.count()).select_from(model).where(model.user_id == user_id)
         )
         assert count == 0, model.__tablename__
+
+
+# --- Model catalog -----------------------------------------------------------
+
+
+async def test_model_accepts_valid_row(db_session: AsyncSession) -> None:
+    model = make_model(id="chat-model", modality="chat")
+    db_session.add(model)
+
+    await db_session.flush()
+    await db_session.refresh(model)
+
+    assert model.capabilities == {"streaming": True}
+    assert model.available is True
+
+
+async def test_model_defaults(db_session: AsyncSession) -> None:
+    model = Model(
+        id="defaults-model",
+        name="Defaults",
+        provider="Test",
+        provider_model_id="defaults-model",
+        modality="image",
+        description="Uses column defaults.",
+        credit_cost=5,
+        sort_order=1,
+    )
+    db_session.add(model)
+
+    await db_session.flush()
+    await db_session.refresh(model)
+
+    assert model.capabilities == {}
+    assert model.available is False
+    assert model.badge is None
+    assert model.credit_cost_10s is None
+    assert model.context_window is None
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"modality": "audio"},
+        {"id": "   "},
+        {"name": ""},
+        {"credit_cost": -1},
+        {"credit_cost_10s": -1, "modality": "video"},
+        {"credit_cost_10s": 30, "modality": "image"},
+        {"context_window": 0},
+        {"context_window": -1},
+        {"sort_order": -1},
+    ],
+)
+async def test_model_constraints(db_session: AsyncSession, overrides: dict[str, Any]) -> None:
+    db_session.add(make_model(**overrides))
+
+    with pytest.raises(IntegrityError):
+        await db_session.flush()
+
+
+async def test_model_id_is_unique(db_session: AsyncSession) -> None:
+    db_session.add(make_model(id="duplicate-model"))
+    await db_session.flush()
+
+    db_session.add(make_model(id="duplicate-model", name="Other"))
+
+    with pytest.raises(IntegrityError):
+        await db_session.flush()
+
+
+async def test_video_model_accepts_a_10s_price(db_session: AsyncSession) -> None:
+    db_session.add(make_model(id="video-model", modality="video", credit_cost_10s=30))
+
+    await db_session.flush()

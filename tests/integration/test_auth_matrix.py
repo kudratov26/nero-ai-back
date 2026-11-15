@@ -31,6 +31,7 @@ from tests.support import (
     RouteCase,
     asgi_client,
     assert_problem,
+    is_unauthorized,
     make_settings,
     post_signup,
     route_path,
@@ -101,7 +102,10 @@ async def test_anonymous_requests_meet_the_declared_expectation(
 ) -> None:
     response = await anonymous.request(case.method, route_path(case), json=request_body(case))
 
-    if case.anonymous_code is None:
+    if case.anonymous_status is None:
+        # 404 (not seeded) or 200 (seeded); either way it must not be an auth rejection.
+        assert not is_unauthorized(response), response.text
+    elif case.anonymous_code is None:
         assert response.status_code == case.anonymous_status, response.text
     else:
         assert_problem(response, case.anonymous_status, case.anonymous_code)

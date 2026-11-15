@@ -8,7 +8,9 @@ and Credit schema plus Argon2id and opaque session-token primitives; B1.2 provid
 `signup`, `login`, `logout`, and `/v1/auth/me` with atomic Free-plan provisioning; B1.3
 adds profile and password updates, session listing and revocation, the Origin check on
 unsafe methods, login/signup rate limits, and the 1 MiB request body cap; B1.4 adds the
-authorization test matrix that fails when a route ships without an auth decision.
+authorization test matrix that fails when a route ships without an auth decision. Phase 2
+is in progress: B2.1 adds the `models` table, its migration, the seed step, and the public
+`GET /v1/plans`, `GET /v1/models`, and `GET /v1/models/{id}` catalog reads.
 
 ## Read first
 
@@ -33,6 +35,7 @@ cp .env.example .env          # fill in real values locally; never commit .env
 uv sync
 docker compose up -d db
 uv run alembic upgrade head
+uv run python -m app.cli seed  # refresh the plan and model catalogs
 uv run uvicorn app.main:app --reload --port 8000
 
 curl http://localhost:8000/health/live
@@ -52,6 +55,17 @@ uv run alembic revision -m "add table"  # create a migration
 
 Migration `0002` seeds the Free, Pro, and Studio plan catalog. `app.db.seed.upsert_plans`
 refreshes the same rows idempotently, so it is safe to run on every deploy.
+
+The `models` catalog (migration `0003`) is seeded at runtime instead, because a model's
+availability depends on configuration:
+
+```bash
+uv run python -m app.cli seed  # idempotent; run after `alembic upgrade head`
+```
+
+The chat model is advertised only when `AI_BASE_URL` and `AI_API_KEY` are set. The Image
+and Video demo models are advertised only when `GENERATION_MODE=mock`. The catalog never
+lists a model whose provider is not configured.
 
 Tests use a separate database: `nero_test` on the same server by default, overridable
 with `TEST_DATABASE_URL`. The suite recreates and migrates it once per session, so never

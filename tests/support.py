@@ -26,14 +26,15 @@ PASSWORD = "correct horse battery"
 class RouteCase(NamedTuple):
     """One HTTP method on one documented path.
 
-    `anonymous_status` and `anonymous_code` are the outcome an unauthenticated
-    caller gets, so the authorization matrix has an explicit expectation per
-    route rather than an inferred one.
+    `anonymous_status` is the outcome an unauthenticated caller gets, so the
+    authorization matrix has an explicit expectation per route rather than an
+    inferred one. `None` means "any response that is not the `401 unauthorized`
+    problem", for routes whose exact status depends on seeded data.
     """
 
     method: str
     path: str
-    anonymous_status: int
+    anonymous_status: int | None
     anonymous_code: str | None = None
 
 
@@ -47,6 +48,11 @@ class RouteCase(NamedTuple):
 PUBLIC_ROUTES: tuple[RouteCase, ...] = (
     RouteCase("GET", "/health/live", 200),
     RouteCase("GET", "/health/ready", 200),
+    RouteCase("GET", "/v1/plans", 200),
+    RouteCase("GET", "/v1/models", 200),
+    # The status depends on whether the catalog has been seeded, so only
+    # "not rejected as unauthenticated" is asserted.
+    RouteCase("GET", "/v1/models/{model_id}", None),
     RouteCase("POST", "/v1/auth/logout", 204),
     RouteCase("POST", "/v1/auth/signup", 400, "invalid_request"),
     RouteCase("POST", "/v1/auth/login", 400, "invalid_request"),
@@ -63,10 +69,11 @@ PROTECTED_ROUTES: tuple[RouteCase, ...] = (
 ROUTES: tuple[RouteCase, ...] = PUBLIC_ROUTES + PROTECTED_ROUTES
 DOCUMENTED_PATHS: frozenset[str] = frozenset(case.path for case in ROUTES)
 
-#: Sample values for `{param}` placeholders, so probes reach the auth layer with a
-#: syntactically valid path instead of failing validation with 422.
+#: Sample values for `{param}` placeholders, so probes reach the handler with a
+#: syntactically valid path instead of failing validation.
 PATH_PARAM_SAMPLES: dict[str, str] = {
     "session_id": "0193a0e0-0000-7000-8000-000000000000",
+    "model_id": "model-does-not-exist",
 }
 
 
@@ -99,6 +106,15 @@ def assert_problem(response: httpx.Response, status: int, code: str) -> dict[str
     assert body["code"] == code
     assert body["requestId"]
     return body
+
+
+def is_unauthorized(response: httpx.Response) -> bool:
+    """Whether the response is the `401 unauthorized` problem."""
+    if response.status_code != 401:
+        return False
+    if not response.headers.get("content-type", "").startswith("application/problem+json"):
+        return False
+    return bool(response.json().get("code") == "unauthorized")
 
 
 async def post_signup(
