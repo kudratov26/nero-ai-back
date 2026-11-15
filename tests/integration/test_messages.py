@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID, uuid4
@@ -20,6 +20,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from app.api.problems import ApiError, ErrorCode
 from app.core.config import Settings
 from app.db.models import Chat, CreditAccount, CreditLedgerEntry, Message, Model
 from app.db.seed import upsert_models
@@ -581,7 +582,7 @@ async def test_a_duplicate_client_id_is_a_conflict_before_spending(chat_env: Cha
 
     duplicate = await send(chat_env, clientId="same-id")
 
-    assert_problem(duplicate, 409, "conflict")
+    assert_problem(duplicate, 409, "duplicate_message")
     rows = await messages_for(chat_env)
     assert [row.role for row in rows] == ["user", "assistant"]
     assert (await account(chat_env)).balance == 49
@@ -705,3 +706,268 @@ async def test_another_account_cannot_read_or_write_the_chat(chat_env: ChatEnv) 
     rows = await messages_for(chat_env)
     assert [row.role for row in rows] == ["user", "assistant"]
     assert (await account(chat_env)).balance == 49
+
+
+# --- Disconnect and cancellation ---------------------------------------------
+
+
+class _BlockingProvider:
+    """Emits one delta, then waits for a release that never comes.
+
+    `closed` proves the per-request generator was torn down; `finished` proves
+    the reply did not run to completion.
+    """
+
+    def __init__(self) -> None:
+        self.finished = False
+        self.closed = False
+        self.requests: list[tuple[ProviderMessage, ...]] = []
+
+    async def aclose(self) -> None:
+        """The app-level provider owns no resources in this test."""
+
+    async def stream_chat(
+        self,
+        *,
+        messages: Sequence[ProviderMessage],
+        model: ProviderModel,
+        params: ChatParams,
+    ) -> AsyncGenerator[ChatDelta, None]:
+        self.requests.append(tuple(messages))
+        try:
+            yield ChatDelta(text="partial ")
+            await asyncio.Event().wait()
+            self.finished = True  # pragma: no cover - the stream is aborted
+            yield ChatDelta(text="rest", finish_reason="stop", usage=ChatUsage(3, 4))
+        finally:
+            self.closed = True
+
+
+async def _prepare(
+    chat_env: ChatEnv, content: str, *, client_id: str | None = None
+) -> message_service.PreparedMessage:
+    return await message_service.prepare_message(
+        chat_env.factory,
+        user_id=chat_env.user_id,
+        chat_id=UUID(chat_env.chat_id),
+        content=content,
+        requested_model_id=None,
+        client_id=client_id,
+        provider_available=True,
+    )
+
+
+async def test_a_disconnect_persists_a_cancelled_reply_and_refunds(chat_env: ChatEnv) -> None:
+    prepared = await _prepare(chat_env, "Abort me")
+    provider = _BlockingProvider()
+    stream = message_service.stream_message(chat_env.factory, provider=provider, prepared=prepared)
+    try:
+        started = await anext(stream)
+        assert isinstance(started, message_service.StartedEvent)
+        delta = await anext(stream)
+        assert isinstance(delta, message_service.DeltaEvent)
+        assert delta.delta == "partial "
+    finally:
+        # What Starlette does when the client goes away between two frames.
+        await stream.aclose()
+    await message_service.drain_abort_finalizers()
+
+    assistant = await _assistant_row(chat_env, prepared.assistant_message_id)
+    assert assistant.status == "cancelled"
+    assert assistant.content == "partial "
+    assert assistant.error_code is None
+    assert (assistant.prompt_tokens, assistant.completion_tokens) == (None, None)
+    assert provider.closed is True
+    assert provider.finished is False
+
+    entries = await ledger_for(chat_env, prepared.assistant_message_id)
+    assert [entry.kind for entry in entries] == ["reserve", "refund"]
+    refreshed = await account(chat_env)
+    assert (refreshed.balance, refreshed.held) == (50, 0)
+
+
+async def test_a_reply_aborted_before_the_stream_starts_refunds(chat_env: ChatEnv) -> None:
+    """The response can be cancelled before the first frame reaches the provider."""
+    prepared = await _prepare(chat_env, "Never streamed")
+
+    message_service.abort_message(chat_env.factory, prepared)
+    await message_service.drain_abort_finalizers()
+
+    assistant = await _assistant_row(chat_env, prepared.assistant_message_id)
+    assert assistant.status == "cancelled"
+    assert assistant.content == ""
+    entries = await ledger_for(chat_env, prepared.assistant_message_id)
+    assert [entry.kind for entry in entries] == ["reserve", "refund"]
+    refreshed = await account(chat_env)
+    assert (refreshed.balance, refreshed.held) == (50, 0)
+
+
+async def test_a_late_abort_after_completion_cannot_refund_twice(chat_env: ChatEnv) -> None:
+    prepared = await _prepare(chat_env, "Complete me")
+    stream = message_service.stream_message(
+        chat_env.factory, provider=chat_env.fake, prepared=prepared
+    )
+    events = [event async for event in stream]
+    assert isinstance(events[-1], message_service.DoneEvent)
+    await stream.aclose()
+
+    # A disconnect callback can still arrive after `done`; the status guard keeps
+    # the committed reservation committed.
+    message_service.abort_message(chat_env.factory, prepared)
+    await message_service.drain_abort_finalizers()
+
+    assistant = await _assistant_row(chat_env, prepared.assistant_message_id)
+    assert assistant.status == "complete"
+    assert assistant.content == REPLY
+    entries = await ledger_for(chat_env, prepared.assistant_message_id)
+    assert [entry.kind for entry in entries] == ["reserve", "commit"]
+    refreshed = await account(chat_env)
+    assert (refreshed.balance, refreshed.held) == (49, 0)
+
+
+async def _abort_over_asgi(
+    app: Any,
+    *,
+    settings: Settings,
+    chat_id: str,
+    cookie: str,
+) -> bytes:
+    """Drive one request, then send `http.disconnect` after the first delta."""
+    path = f"/v1/chats/{chat_id}/messages"
+    raw_body = json.dumps(
+        {"content": "Abort over HTTP", "clientId": f"abort-{uuid4().hex}"}
+    ).encode()
+    disconnect = asyncio.Event()
+    body_seen = False
+    framed = bytearray()
+
+    async def receive() -> dict[str, Any]:
+        nonlocal body_seen
+        if not body_seen:
+            body_seen = True
+            return {"type": "http.request", "body": raw_body, "more_body": False}
+        await disconnect.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message: dict[str, Any]) -> None:
+        if message["type"] == "http.response.body":
+            framed.extend(message.get("body", b""))
+            if b"event: message.delta" in framed:
+                disconnect.set()
+
+    scope: dict[str, Any] = {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode(),
+        "query_string": b"",
+        "root_path": "",
+        "headers": [
+            (b"host", b"testserver"),
+            (b"origin", b"http://localhost:3000"),
+            (b"accept", b"text/event-stream"),
+            (b"content-type", b"application/json"),
+            (b"content-length", str(len(raw_body)).encode()),
+            (b"cookie", f"{settings.session_cookie_name}={cookie}".encode()),
+        ],
+        "client": ("127.0.0.1", 1234),
+        "server": ("testserver", 80),
+    }
+    await asyncio.wait_for(app(scope, receive, send), timeout=5)
+    return bytes(framed)
+
+
+async def test_a_client_disconnect_over_http_cancels_the_reply(chat_env: ChatEnv) -> None:
+    provider = _BlockingProvider()
+    app = create_app(chat_env.settings, chat_provider=provider)
+    async with asgi_client(app) as http:
+        signup = await post_signup(http, f"abort-{uuid4().hex}@example.com")
+        assert signup.status_code == 201, signup.text
+        user_id = UUID(signup.json()["user"]["id"])
+        created = await http.post("/v1/chats", json={"modelId": chat_env.model_id})
+        assert created.status_code == 201, created.text
+        chat_id = created.json()["id"]
+        cookie = http.cookies.get(chat_env.settings.session_cookie_name)
+        assert cookie is not None
+
+        framed = await _abort_over_asgi(
+            app,
+            settings=chat_env.settings,
+            chat_id=chat_id,
+            cookie=cookie,
+        )
+        await message_service.drain_abort_finalizers()
+        history = await http.get(f"/v1/chats/{chat_id}/messages")
+        assert history.status_code == 200, history.text
+
+    items = history.json()["items"]
+    assert [item["status"] for item in items] == ["cancelled", "complete"]
+    assert items[0]["content"] == "partial "
+    assert items[0]["errorCode"] is None
+
+    text = framed.decode()
+    assert "event: message.started" in text
+    assert "event: message.delta" in text
+    assert "event: message.completed" not in text
+    assert "event: done" not in text
+    assert provider.closed is True
+    assert provider.finished is False
+
+    async with session_scope(chat_env.factory) as session:
+        rows = list(
+            await session.scalars(
+                select(Message)
+                .where(Message.chat_id == UUID(chat_id))
+                .order_by(Message.created_at, Message.id)
+            )
+        )
+        balance = await session.get(CreditAccount, user_id)
+    assert [row.role for row in rows] == ["user", "assistant"]
+    assert rows[1].status == "cancelled"
+    assert rows[1].content == "partial "
+    assert balance is not None
+    assert (balance.balance, balance.held) == (50, 0)
+
+
+async def test_a_cancelled_reply_is_not_sent_back_as_context(chat_env: ChatEnv) -> None:
+    prepared = await _prepare(chat_env, "Abort this")
+    stream = message_service.stream_message(
+        chat_env.factory, provider=_BlockingProvider(), prepared=prepared
+    )
+    await anext(stream)
+    await anext(stream)
+    await stream.aclose()
+    await message_service.drain_abort_finalizers()
+
+    assert (await send(chat_env, "Next question")).status_code == 200
+
+    context = chat_env.fake.requests[-1].messages
+    assert [(message.role, message.content) for message in context] == [
+        ("user", "Abort this"),
+        ("user", "Next question"),
+    ]
+
+
+async def test_concurrent_duplicates_create_exactly_one_turn(chat_env: ChatEnv) -> None:
+    async def attempt() -> object:
+        return await _prepare(chat_env, "Race", client_id="race")
+
+    results = await asyncio.gather(attempt(), attempt(), return_exceptions=True)
+    winners = [result for result in results if isinstance(result, message_service.PreparedMessage)]
+    errors = [result for result in results if isinstance(result, ApiError)]
+
+    assert len(winners) == 1
+    assert len(errors) == 1
+    assert errors[0].code is ErrorCode.DUPLICATE_MESSAGE
+    rows = await messages_for(chat_env)
+    assert [row.role for row in rows] == ["user", "assistant"]
+    entries = await ledger_for(chat_env, winners[0].assistant_message_id)
+    assert [entry.kind for entry in entries] == ["reserve"]
+
+    message_service.abort_message(chat_env.factory, winners[0])
+    await message_service.drain_abort_finalizers()
+    refreshed = await account(chat_env)
+    assert (refreshed.balance, refreshed.held) == (50, 0)

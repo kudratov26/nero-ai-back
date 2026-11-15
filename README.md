@@ -21,7 +21,9 @@ fake provider for tests, and `python -m app.cli provider-check`; B3.2 adds the `
 and its migration, chat create/read/rename/soft-delete routes, opaque-cursor listing, and
 the ownership rule that reports another account's chat as `404`; B3.3 adds the `messages`
 table, cursor-paginated history, and the streamed reply endpoint that persists both turns,
-reserves and settles Credits, emits heartbeats, and refunds a failed reply.
+reserves and settles Credits, emits heartbeats, and refunds a failed reply; B3.4 detects a
+client disconnect, cancels the provider, persists the partial reply as `cancelled`, refunds
+its reservation, and rejects a repeated `clientId` with `409 duplicate_message`.
 
 ## Read first
 

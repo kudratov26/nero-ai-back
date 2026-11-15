@@ -85,7 +85,8 @@ needed. Direct cross-origin access is supported only for local development.
 - Pagination: opaque cursor, `limit` default 20, max 100.
 - Response envelope for lists: `{ "items": [...], "nextCursor": "..." | null }`
 - Errors: `application/problem+json` (RFC 9457 shape), see section 9.
-- Idempotency: `Idempotency-Key` header on message and generation creation.
+- Idempotency: `Idempotency-Key` on generation creation; a chat message carries the
+  client's `clientId`, and a retry is rejected as `duplicate_message`.
 - Every response includes `X-Request-ID`; clients may send one, otherwise it is generated.
 - API version changes only for breaking contract changes. Additive fields are allowed.
 
@@ -432,7 +433,7 @@ Shape:
 `code` values:
 
 `invalid_request`, `unauthorized`, `forbidden`, `not_found`, `conflict`,
-`email_taken`, `invalid_credentials`, `weak_password`, `rate_limited`,
+`duplicate_message`, `email_taken`, `invalid_credentials`, `weak_password`, `rate_limited`,
 `insufficient_credits`, `model_unavailable`, `provider_error`, `provider_timeout`,
 `generation_not_cancellable`, `idempotency_conflict`, `origin_not_allowed`,
 `payload_too_large`, `internal_error`.
@@ -553,7 +554,7 @@ Request:
 stored on the user turn and is unique per chat. `modelId` is optional and must equal the
 chat's model when sent.
 
-Headers: `Accept: text/event-stream`, `Idempotency-Key: <uuid>` optional.
+Headers: `Accept: text/event-stream`.
 
 The server checks auth, chat ownership, model availability, and Credits **before**
 returning 200. Insufficient Credits is a normal 409 JSON response.
@@ -590,7 +591,9 @@ Rules:
 - Reserve Credits before the provider call; commit on `message.completed`; refund on
   failure or client disconnect before completion. A failed stream stores the partial
   content, `status=failed`, and the mapped `errorCode` before the refund commits.
-- On disconnect, cancel the provider request and mark the assistant message `cancelled`.
+- On disconnect, cancel the provider request, persist the partial content with
+  `status=cancelled`, and refund the reservation. Credits move exactly once: a reply
+  interrupted during its completion write still ends either committed or refunded.
 - Send a heartbeat comment (`: ping`) every 15 seconds.
 - No resume/replay in v1. If a client retries with the same `(chatId, clientId)`, return
   `409 duplicate_message`; the client should refetch history.

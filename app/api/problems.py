@@ -34,6 +34,7 @@ class ErrorCode(StrEnum):
     FORBIDDEN = "forbidden"
     NOT_FOUND = "not_found"
     CONFLICT = "conflict"
+    DUPLICATE_MESSAGE = "duplicate_message"
     EMAIL_TAKEN = "email_taken"
     INVALID_CREDENTIALS = "invalid_credentials"
     WEAK_PASSWORD = "weak_password"
