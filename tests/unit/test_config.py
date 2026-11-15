@@ -168,3 +168,17 @@ def test_simulated_plan_changes_can_be_forced(allowed: bool) -> None:
     )
 
     assert settings.simulated_plan_changes_allowed is allowed
+
+
+def test_ai_timeout_defaults_to_120_seconds() -> None:
+    assert make_settings().ai_request_timeout_seconds == 120.0
+
+
+def test_ai_timeout_can_be_overridden() -> None:
+    assert make_settings(ai_request_timeout_seconds=5).ai_request_timeout_seconds == 5.0
+
+
+@pytest.mark.parametrize("value", [0, -1, -0.5])
+def test_ai_timeout_must_be_positive(value: float) -> None:
+    with pytest.raises(ValidationError):
+        make_settings(ai_request_timeout_seconds=value)

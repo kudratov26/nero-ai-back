@@ -369,7 +369,8 @@ Seed rules (written by `python -m app.cli seed`, not by a migration, because
 availability depends on configuration):
 
 - The chat model is `AI_CHAT_MODEL` and is available only when `AI_BASE_URL` and
-  `AI_API_KEY` are both set. Phase B3.1 tightens this to a successful startup probe.
+  `AI_API_KEY` are both set. Run `python -m app.cli provider-check` (11.2) with the real
+  key before trusting the catalog row; B3.5 performs the first real round trip.
 - Do not list GPT, Claude, Gemini, or other providers as available without an adapter.
 - The Image and Video models are the deterministic `Demo` providers. They are available
   only when `GENERATION_MODE=mock`; the response carries `provider: "Demo"` so no caller
@@ -560,15 +561,34 @@ vendor SDK.
 
 ### 11.2 Coarena / DeepSeek V4.1 Flash
 
+Ports, DTOs (`ProviderMessage`, `ProviderModel`, `ChatParams`, `ChatUsage`, `ChatDelta`),
+and the error taxonomy live in `app/providers/base.py`. The adapter is
+`app/providers/openai_compatible.py`; `app/providers/fake.py` is a deterministic provider
+for tests and is never wired into the app.
+
 - Treat the gateway as OpenAI-compatible until its documentation says otherwise:
-  `POST {AI_BASE_URL}/chat/completions` with `Authorization: Bearer <key>` and SSE.
+  `POST {AI_BASE_URL}/chat/completions` with `Authorization: Bearer <key>`, `stream: true`,
+  `stream_options.include_usage: true`, and one JSON object per `data:` line, terminated by
+  `data: [DONE]`. `AI_BASE_URL` has no trailing slash (the settings validator strips it).
 - Configuration: `AI_BASE_URL`, `AI_API_KEY`, `AI_CHAT_MODEL`. The public slug can differ
-  from the provider model id; store both on the model row.
-- Timeouts: connect 10s, read 120s, write 30s. Retry only before the first token, at most
-  twice, with jitter. Never retry 4xx.
+  from the provider model id; store both on the model row. `build_chat_provider(settings)`
+  returns `None` when the base URL or key is missing, so wiring can fail closed.
+- Timeouts: connect 10s, write 30s, read from `AI_REQUEST_TIMEOUT_SECONDS` (default 120).
+- Retry only before the first delta has been delivered, at most twice, with a jittered
+  exponential backoff. Never retry a 4xx, and never retry after content reached the client.
+- Error mapping: 429 → `rate_limited`; a timeout → `provider_timeout`; a 5xx or a dropped
+  connection → `provider_error`; a malformed `data:` line, a non-object chunk, or a
+  response that is not `text/event-stream` → `provider_error`. Every error carries a
+  `retryable` flag; it is true only for timeouts and 5xx/transport failures.
+- An unsent optional parameter (`temperature`, `max_tokens`) is omitted from the payload
+  rather than sent as `null`. Blank lines, SSE comments (`: ping`), and other `event:` or
+  `id:` fields are ignored; usage may be absent, in which case token counts are unknown.
 - A CLI validates the key without printing it:
-  `uv run python -m app.cli provider-check` sends a one-token request and prints the model,
-  status, and usage.
+  `uv run python -m app.cli provider-check` sends a one-token request and prints exactly
+  `model=... status=ok finish=... prompt_tokens=... completion_tokens=... latency_ms=...`,
+  or `status=error code=<problem code>` and exits non-zero. It prints neither the prompt,
+  the completion, nor the key. When the gateway is unconfigured it explains that on
+  stderr and exits 1.
 - If the gateway is not OpenAI-compatible, add `app/providers/coarena.py` behind the same
   port. Do not leak gateway details into services.
 - Prompts and completions are never logged. Log only model id, token counts, latency, and
