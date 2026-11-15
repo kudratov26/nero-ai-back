@@ -680,7 +680,9 @@ Environment variables (validated at startup; fail fast on missing required value
   Chat: 30 messages per minute per user. Generations: 10 per minute per user.
   Limits are enforced in-process on a single instance; `RATE_LIMIT_BACKEND=redis` must
   be implemented before running more than one.
-- Authorization: every query is scoped by user id. Public routes are explicitly listed.
+- Authorization: every query is scoped by user id. Public routes are explicitly listed;
+  a test asserts that the route table matches the app and that every protected route
+  depends on `get_current_auth`, so a route cannot ship without an auth decision.
 - Provider URLs come from configuration only (no SSRF surface).
 - Secrets are redacted from logs and error responses. Authorization headers are never
   logged.

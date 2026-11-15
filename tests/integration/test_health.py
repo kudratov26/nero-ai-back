@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from app.main import create_app
-from tests.support import asgi_client, make_settings
+from tests.support import DOCUMENTED_PATHS, asgi_client, make_settings
 
 
 @pytest.fixture
@@ -35,15 +35,5 @@ async def test_openapi_exposes_only_documented_routes(
 ) -> None:
     schema = (await client.get("/openapi.json")).json()
 
-    assert set(schema["paths"]) == {
-        "/health/live",
-        "/health/ready",
-        "/v1/auth/signup",
-        "/v1/auth/login",
-        "/v1/auth/logout",
-        "/v1/auth/me",
-        "/v1/auth/password",
-        "/v1/auth/sessions",
-        "/v1/auth/sessions/{session_id}",
-    }
+    assert set(schema["paths"]) == set(DOCUMENTED_PATHS)
     assert schema["info"]["title"] == "Nero AI API"
