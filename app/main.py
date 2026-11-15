@@ -20,6 +20,7 @@ from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging
 from app.core.rate_limit import MemoryRateLimiter
 from app.db.session import create_engine, create_session_factory
+from app.domain import messages as message_service
 from app.providers.base import ChatProvider
 from app.providers.openai_compatible import build_chat_provider
 
@@ -49,6 +50,7 @@ def create_app(
             yield
         finally:
             try:
+                await message_service.drain_abort_finalizers()
                 if provider is not None:
                     await provider.aclose()
             finally:

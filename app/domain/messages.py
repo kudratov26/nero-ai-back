@@ -12,7 +12,7 @@ transaction, so neither a slow provider nor a slow client holds a connection.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -204,7 +204,9 @@ async def prepare_message(
                     )
                 )
                 if duplicate is not None:
-                    raise ApiError(ErrorCode.CONFLICT, 409, detail=DUPLICATE_MESSAGE_DETAIL)
+                    raise ApiError(
+                        ErrorCode.DUPLICATE_MESSAGE, 409, detail=DUPLICATE_MESSAGE_DETAIL
+                    )
 
             history = list(
                 await session.scalars(
@@ -269,7 +271,9 @@ async def prepare_message(
             )
     except IntegrityError as exc:
         if "uq_messages_chat_id_client_id" in str(exc.orig):
-            raise ApiError(ErrorCode.CONFLICT, 409, detail=DUPLICATE_MESSAGE_DETAIL) from exc
+            raise ApiError(
+                ErrorCode.DUPLICATE_MESSAGE, 409, detail=DUPLICATE_MESSAGE_DETAIL
+            ) from exc
         raise
 
 
@@ -341,7 +345,7 @@ async def _finalize_success(
         assistant.updated_at = now
         # Lock order is chat -> account, matching `prepare_message`. Reversing it
         # here could deadlock against a second message arriving for the same chat.
-        await _touch_chat(session, chat_id=prepared.chat_id, now=now, lock=True)
+        await _touch_chat(session, chat_id=prepared.chat_id, now=now)
         account = await credits.commit(
             session,
             user_id=prepared.user_id,
@@ -379,7 +383,7 @@ async def _finalize_failure(
         assistant.status = "failed"
         assistant.error_code = code.value
         assistant.updated_at = now
-        await _touch_chat(session, chat_id=prepared.chat_id, now=now, lock=True)
+        await _touch_chat(session, chat_id=prepared.chat_id, now=now)
         await credits.refund(
             session,
             user_id=prepared.user_id,
@@ -392,20 +396,53 @@ async def _finalize_failure(
         return True
 
 
-async def _touch_chat(
-    session: AsyncSession, *, chat_id: UUID, now: datetime, lock: bool = False
-) -> None:
-    statement = select(Chat).where(Chat.id == chat_id)
-    if lock:
-        statement = statement.with_for_update()
-    chat = await session.scalar(statement)
+async def _finalize_cancelled(
+    session_factory: async_sessionmaker[AsyncSession],
+    prepared: PreparedMessage,
+    *,
+    content: str,
+) -> bool:
+    """Persist a disconnected reply as cancelled and refund its reservation.
+
+    Returns whether this call refunded. A message that already reached a
+    terminal state is left alone, so an abort that races completion cannot move
+    Credits twice.
+    """
+    async with session_scope(session_factory) as session:
+        assistant = await _lock_assistant(
+            session,
+            user_id=prepared.user_id,
+            assistant_message_id=prepared.assistant_message_id,
+        )
+        if assistant is None or assistant.status != "streaming":
+            return False
+        now = utcnow()
+        assistant.content = content
+        assistant.status = "cancelled"
+        assistant.updated_at = now
+        await _touch_chat(session, chat_id=prepared.chat_id, now=now)
+        await credits.refund(
+            session,
+            user_id=prepared.user_id,
+            amount=prepared.credit_cost,
+            reason=CHAT_CREDIT_REASON,
+            ref_type="chat_message",
+            ref_id=prepared.assistant_message_id,
+        )
+        await session.flush()
+        return True
+
+
+async def _touch_chat(session: AsyncSession, *, chat_id: UUID, now: datetime) -> None:
+    """Bump the chat and take its row lock, keeping chat -> account order."""
+    chat = await session.scalar(select(Chat).where(Chat.id == chat_id).with_for_update())
     if chat is not None:
         chat.updated_at = now
 
 
 async def _provider_events(
     provider: ChatProvider, prepared: PreparedMessage
-) -> AsyncIterator[ChatDelta | HeartbeatEvent]:
+) -> AsyncGenerator[ChatDelta | HeartbeatEvent, None]:
     """Yield provider deltas, or a heartbeat after `HEARTBEAT_SECONDS` of silence.
 
     `anext` stays pending across a heartbeat instead of being cancelled, so a
@@ -469,92 +506,187 @@ async def _emit_failure(
     )
 
 
+#: Detached abort cleanups. A disconnected request task is already cancelled, so
+#: every await in it raises again; settling the message has to run elsewhere.
+#: The set keeps a strong reference to each task until it finishes.
+_abort_tasks: set[asyncio.Task[None]] = set()
+
+
+def _abort_finished(task: asyncio.Task[None]) -> None:
+    _abort_tasks.discard(task)
+    if task.cancelled():
+        return
+    error = task.exception()
+    if error is not None:
+        log.error("chat.abort_finalize_failed", error=type(error).__name__)
+
+
+async def _abort_cleanup(
+    session_factory: async_sessionmaker[AsyncSession],
+    prepared: PreparedMessage,
+    *,
+    content: str,
+    provider_events: AsyncGenerator[ChatDelta | HeartbeatEvent, None] | None,
+) -> None:
+    """Close an abandoned provider stream after settling the message and hold."""
+    try:
+        await _finalize_cancelled(session_factory, prepared, content=content)
+    except Exception as exc:
+        log.error(
+            "chat.abort_refund_failed",
+            chat_id=str(prepared.chat_id),
+            message_id=str(prepared.assistant_message_id),
+            error=type(exc).__name__,
+        )
+        raise
+    finally:
+        if provider_events is not None:
+            # The provider generator may already be closing in the cancelled
+            # task; an `aclose` race is harmless once the database step ran.
+            with suppress(Exception):
+                await provider_events.aclose()
+
+
+def _spawn_abort_cleanup(
+    session_factory: async_sessionmaker[AsyncSession],
+    prepared: PreparedMessage,
+    *,
+    content: str,
+    provider_events: AsyncGenerator[ChatDelta | HeartbeatEvent, None] | None,
+) -> None:
+    task = asyncio.create_task(
+        _abort_cleanup(
+            session_factory,
+            prepared,
+            content=content,
+            provider_events=provider_events,
+        )
+    )
+    _abort_tasks.add(task)
+    task.add_done_callback(_abort_finished)
+
+
+def abort_message(
+    session_factory: async_sessionmaker[AsyncSession],
+    prepared: PreparedMessage,
+    *,
+    content: str = "",
+) -> None:
+    """Settle a reply whose client left before its stream produced a frame."""
+    _spawn_abort_cleanup(
+        session_factory,
+        prepared,
+        content=content,
+        provider_events=None,
+    )
+
+
+async def drain_abort_finalizers() -> None:
+    """Wait for detached abort cleanups. Runs on shutdown and in tests."""
+    while _abort_tasks:
+        await asyncio.gather(*tuple(_abort_tasks), return_exceptions=True)
+
+
 async def stream_message(
     session_factory: async_sessionmaker[AsyncSession],
     *,
     provider: ChatProvider,
     prepared: PreparedMessage,
-) -> AsyncIterator[ChatStreamEvent]:
+) -> AsyncGenerator[ChatStreamEvent, None]:
     """Stream one reply and persist its outcome.
 
     A provider failure ends the stream with `message.failed` and no `done`; a
-    successful reply ends with `message.completed` then `done`.
+    successful reply ends with `message.completed` then `done`. A client that
+    goes away closes the generator, which persists the partial reply as
+    `cancelled` and refunds the reservation.
     """
-    yield StartedEvent(
-        user_message_id=prepared.user_message_id,
-        assistant_message_id=prepared.assistant_message_id,
-        model_id=prepared.model_slug,
-    )
-
     chunks: list[str] = []
     usage: ChatUsage | None = None
+    provider_events = _provider_events(provider, prepared)
     try:
-        async for item in _provider_events(provider, prepared):
-            if isinstance(item, HeartbeatEvent):
-                yield item
-                continue
-            if item.usage is not None:
-                usage = item.usage
-            if item.text:
-                chunks.append(item.text)
-                yield DeltaEvent(message_id=prepared.assistant_message_id, delta=item.text)
-    except ProviderError as exc:
-        yield await _emit_failure(
+        yield StartedEvent(
+            user_message_id=prepared.user_message_id,
+            assistant_message_id=prepared.assistant_message_id,
+            model_id=prepared.model_slug,
+        )
+
+        try:
+            async for item in provider_events:
+                if isinstance(item, HeartbeatEvent):
+                    yield item
+                    continue
+                if item.usage is not None:
+                    usage = item.usage
+                if item.text:
+                    chunks.append(item.text)
+                    yield DeltaEvent(message_id=prepared.assistant_message_id, delta=item.text)
+        except ProviderError as exc:
+            yield await _emit_failure(
+                session_factory,
+                prepared,
+                content="".join(chunks),
+                code=exc.code,
+                detail=exc.detail,
+            )
+            return
+        except Exception as exc:
+            log.error(
+                "chat.stream_provider_failed",
+                chat_id=str(prepared.chat_id),
+                message_id=str(prepared.assistant_message_id),
+                error=type(exc).__name__,
+            )
+            yield await _emit_failure(
+                session_factory,
+                prepared,
+                content="".join(chunks),
+                code=ErrorCode.PROVIDER_ERROR,
+                detail=STREAM_FAILED_DETAIL,
+            )
+            return
+
+        content = "".join(chunks)
+        try:
+            account = await _finalize_success(
+                session_factory,
+                prepared,
+                content=content,
+                usage=usage,
+            )
+        except Exception as exc:
+            log.error(
+                "chat.stream_completion_failed",
+                chat_id=str(prepared.chat_id),
+                message_id=str(prepared.assistant_message_id),
+                error=type(exc).__name__,
+            )
+            yield await _emit_failure(
+                session_factory,
+                prepared,
+                content=content,
+                code=ErrorCode.INTERNAL_ERROR,
+                detail=STREAM_SAVE_FAILED_DETAIL,
+            )
+            return
+
+        yield CompletedEvent(
+            message_id=prepared.assistant_message_id,
+            content=content,
+            prompt_tokens=usage.prompt_tokens if usage is not None else None,
+            completion_tokens=usage.completion_tokens if usage is not None else None,
+            balance=account.balance,
+            held=account.held,
+            available=credits.available(account),
+            charged=prepared.credit_cost,
+        )
+        yield DoneEvent()
+    except (GeneratorExit, asyncio.CancelledError):
+        # The response task is unwinding (client disconnect), so an await on the
+        # database here would be cancelled again. Settle it from a detached task.
+        _spawn_abort_cleanup(
             session_factory,
             prepared,
             content="".join(chunks),
-            code=exc.code,
-            detail=exc.detail,
+            provider_events=provider_events,
         )
-        return
-    except Exception as exc:
-        log.error(
-            "chat.stream_provider_failed",
-            chat_id=str(prepared.chat_id),
-            message_id=str(prepared.assistant_message_id),
-            error=type(exc).__name__,
-        )
-        yield await _emit_failure(
-            session_factory,
-            prepared,
-            content="".join(chunks),
-            code=ErrorCode.PROVIDER_ERROR,
-            detail=STREAM_FAILED_DETAIL,
-        )
-        return
-
-    content = "".join(chunks)
-    try:
-        account = await _finalize_success(
-            session_factory,
-            prepared,
-            content=content,
-            usage=usage,
-        )
-    except Exception as exc:
-        log.error(
-            "chat.stream_completion_failed",
-            chat_id=str(prepared.chat_id),
-            message_id=str(prepared.assistant_message_id),
-            error=type(exc).__name__,
-        )
-        yield await _emit_failure(
-            session_factory,
-            prepared,
-            content=content,
-            code=ErrorCode.INTERNAL_ERROR,
-            detail=STREAM_SAVE_FAILED_DETAIL,
-        )
-        return
-
-    yield CompletedEvent(
-        message_id=prepared.assistant_message_id,
-        content=content,
-        prompt_tokens=usage.prompt_tokens if usage is not None else None,
-        completion_tokens=usage.completion_tokens if usage is not None else None,
-        balance=account.balance,
-        held=account.held,
-        available=credits.available(account),
-        charged=prepared.credit_cost,
-    )
-    yield DoneEvent()
+        raise

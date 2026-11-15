@@ -166,11 +166,13 @@ on retry.
     provider error refunds; no buffering. Covered by
     `tests/integration/test_messages.py` and `tests/integration/test_schema.py`.
 
-- [ ] **B3.4 Disconnect, cancel, and idempotency**
+- [x] **B3.4 Disconnect, cancel, and idempotency**
   - Detect client disconnect, cancel provider task, mark message `cancelled`, refund.
-  - `clientId` uniqueness per chat; duplicate returns 409.
+  - `clientId` uniqueness per chat; duplicate returns `409 duplicate_message`.
   - Handle provider timeout and rate limit with mapped codes.
   - Acceptance: abort test with a slow fake provider; duplicate request test; refund test.
+    Covered by `tests/integration/test_messages.py`; the duplicate code is in
+    `app/api/problems.py`.
 
 - [ ] **B3.5 Real-provider smoke (human-assisted)**
   - Run `provider-check` and one streamed chat with the real key in a local environment.

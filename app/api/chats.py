@@ -8,13 +8,14 @@ one that does not exist.
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, Callable
 from typing import Annotated, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Response, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from starlette.types import Send
 
 from app.api.deps import (
     enforce_rate_limit,
@@ -159,9 +160,54 @@ def _sse_frame(event: ChatStreamEvent) -> str:
     return f"event: {name}\ndata: {payload}\n\n"
 
 
-async def _sse_stream(events: AsyncIterator[ChatStreamEvent]) -> AsyncIterator[str]:
-    async for event in events:
-        yield _sse_frame(event)
+class _EventStream:
+    """One reply's SSE frames, with cleanup when the client goes away.
+
+    Starlette cancels the response task on disconnect, which may leave the body
+    iterator suspended between two frames. `aclose` throws `GeneratorExit` into
+    the domain generator, so the partial reply is persisted and its reservation
+    is refunded. A stream cancelled before its first frame never started the
+    provider, so it settles the prepared message directly.
+    """
+
+    def __init__(
+        self,
+        events: AsyncGenerator[ChatStreamEvent, None],
+        *,
+        on_disconnect: Callable[[], None],
+    ) -> None:
+        self._events = events
+        self._on_disconnect = on_disconnect
+        self._started = False
+
+    def __aiter__(self) -> _EventStream:
+        return self
+
+    async def __anext__(self) -> str:
+        self._started = True
+        return _sse_frame(await anext(self._events))
+
+    async def aclose(self) -> None:
+        if not self._started:
+            self._on_disconnect()
+            return
+        await self._events.aclose()
+
+
+class _SseResponse(StreamingResponse):
+    """Closes the event iterator when the response task finishes or is cancelled.
+
+    Without this, an iterator suspended between frames is only closed at garbage
+    collection, so a disconnected reply keeps its Credits on hold in the meantime.
+    """
+
+    async def stream_response(self, send: Send) -> None:
+        try:
+            await super().stream_response(send)
+        finally:
+            close = getattr(self.body_iterator, "aclose", None)
+            if close is not None:
+                await close()
 
 
 @router.get(
@@ -332,7 +378,10 @@ async def list_messages(
             "content": {"text/event-stream": {"schema": {"type": "string"}}},
         },
         404: CHAT_NOT_FOUND,
-        409: {"description": "The message duplicates an earlier client id.", **PROBLEM},
+        409: {
+            "description": "The message duplicates an earlier client id (`duplicate_message`).",
+            **PROBLEM,
+        },
         422: {"description": "The chat's model is not available.", **PROBLEM},
     },
 )
@@ -367,8 +416,12 @@ async def send_message(
         provider=provider,
         prepared=prepared,
     )
-    return StreamingResponse(
-        _sse_stream(events),
+    event_stream = _EventStream(
+        events,
+        on_disconnect=lambda: message_service.abort_message(session_factory, prepared),
+    )
+    return _SseResponse(
+        event_stream,
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache, no-transform",
