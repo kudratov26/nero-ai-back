@@ -65,6 +65,10 @@ PUBLIC_ROUTES: tuple[RouteCase, ...] = (
     # asset (B4.2). A random id is `404`, never `401`: a signed-out reader must
     # not learn whether an asset exists.
     RouteCase("GET", "/v1/assets/{asset_id}", 404, "not_found"),
+    # Explore reads are public. The list is an empty page on a clean database;
+    # the detail hides unknown and unpublished posts behind the same `404`.
+    RouteCase("GET", "/v1/explore/posts", 200),
+    RouteCase("GET", "/v1/explore/posts/{post_id}", 404, "not_found"),
 )
 
 PROTECTED_ROUTES: tuple[RouteCase, ...] = (
@@ -97,6 +101,9 @@ PROTECTED_ROUTES: tuple[RouteCase, ...] = (
         "unauthorized",
         probe_body={"content": "Probe"},
     ),
+    # Liking is an authenticated write, even though the post itself is public.
+    RouteCase("POST", "/v1/explore/posts/{post_id}/like", 401, "unauthorized"),
+    RouteCase("DELETE", "/v1/explore/posts/{post_id}/like", 401, "unauthorized"),
 )
 
 ROUTES: tuple[RouteCase, ...] = PUBLIC_ROUTES + PROTECTED_ROUTES
@@ -109,6 +116,7 @@ PATH_PARAM_SAMPLES: dict[str, str] = {
     "model_id": "model-does-not-exist",
     "chat_id": "0193a0e0-0000-7000-8000-000000000000",
     "asset_id": "0193a0e0-0000-7000-8000-000000000000",
+    "post_id": "0193a0e0-0000-7000-8000-000000000000",
 }
 
 

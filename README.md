@@ -28,7 +28,9 @@ verifies the real Coarena gateway with `provider-check` and one streamed
 `deepseek-v4-1-flash-1017` reply whose usage is persisted and whose Credit is committed
 from the reservation. Phase 4 is in progress: B4.1 adds the `assets` table, a local storage
 adapter that refuses keys outside its root, and `GET /v1/assets/{id}` with owner permission,
-`ETag`, cache headers, and HTTP Range delivery.
+`ETag`, cache headers, and HTTP Range delivery; B4.2 adds the `posts` and `post_likes`
+tables, public cursor-paginated Explore list and detail routes, idempotent likes, and
+published-post asset delivery with a public cache policy.
 
 ## Read first
 

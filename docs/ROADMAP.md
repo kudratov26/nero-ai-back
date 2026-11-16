@@ -200,10 +200,13 @@ permission-checked and traversal-safe.
     published-post access joins the same permission helper in B4.2, when `posts`
     exists.
 
-- [ ] **B4.2 Posts and likes**
+- [x] **B4.2 Posts and likes**
   - `posts`, `post_likes` tables, routes, cursor pagination, `likedByMe`.
   - Idempotent like/unlike.
   - Acceptance: public read, auth write, duplicate like, cross-user isolation tests.
+    Public browsing, cursor paging, and the like matrix live in
+    `tests/integration/test_explore.py`; published-post asset delivery extends
+    `tests/integration/test_assets.py`. The system author and seeded posts are B4.3.
 
 - [ ] **B4.3 Seed Explore**
   - `scripts/seed.py` creates the system author, 16 posts, and bundled sample assets.

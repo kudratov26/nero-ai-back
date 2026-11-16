@@ -1,9 +1,8 @@
 """Asset use cases: create for an owner and resolve a permission-checked file.
 
-Permission lives here rather than in the route. Today an asset is readable by its
-owner only; B4.2 extends `can_read` with the published-post branch, and the route
-already answers a denied read as `404 not_found` so an outsider cannot tell an
-existing asset from a missing one.
+Permission lives here rather than in the route. An asset is readable by its owner,
+or by anyone when it belongs to a published Explore post. A denied read answers
+`404 not_found`, so an outsider cannot tell an existing asset from a missing one.
 
 The storage adapter is passed in rather than built from settings, so tests use a
 temporary directory and the route owns the app-wide instance.
@@ -14,11 +13,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import UUID
 
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.api.problems import ApiError, ErrorCode
 from app.core.ids import uuid7
-from app.db.models import Asset
+from app.db.models import Asset, Post
 from app.db.models.asset import ASSET_KINDS
 from app.db.session import session_scope
 from app.storage.local import LocalStorage, StorageError, StoredFile, storage_key_for
@@ -27,9 +27,10 @@ ASSET_NOT_FOUND_DETAIL = "That asset does not exist."
 INVALID_ASSET_KIND_DETAIL = "kind must be image or video."
 INVALID_ASSET_DETAIL = "The asset content is not valid."
 
-#: Owner bytes are private to the browser. B4.2 adds the public policy for a
-#: published gallery asset alongside its permission rule.
+#: An owner's bytes are private to their browser. A published gallery asset is
+#: safe to share in a public cache; the 24-hour window is the documented policy.
 OWNER_CACHE_CONTROL = "private, max-age=3600"
+PUBLIC_CACHE_CONTROL = "public, max-age=86400"
 
 _MIME_EXTENSIONS = {
     "image/png": "png",
@@ -54,21 +55,34 @@ def extension_for_mime(mime_type: str) -> str:
     return _MIME_EXTENSIONS.get(mime_type.lower(), "bin")
 
 
-def can_read(asset: Asset, *, user_id: UUID | None) -> bool:
+def can_read(asset: Asset, *, user_id: UUID | None, published_post: bool = False) -> bool:
     """Whether the caller may download the bytes.
 
-    A signed-out caller never may. B4.2 adds the published-post case here, so
-    this function stays the single place the rule is expressed.
+    The owner always may. Everyone else, including a signed-out caller, may read
+    the asset only when a published Explore post attaches it. `published_post` is
+    resolved by the caller because that needs the database.
     """
-    return user_id is not None and asset.user_id == user_id
+    if user_id is not None and asset.user_id == user_id:
+        return True
+    return published_post
 
 
-def cache_control_for(asset: Asset) -> str:
-    """The cache policy for a readable asset.
+async def _is_published_post_asset(session: AsyncSession, asset: Asset) -> bool:
+    """Whether a published post covers or attaches this asset.
 
-    B4.2 returns the public policy for a published post's asset.
+    `posts.asset_id` is the canonical cover link; `assets.post_id` is the
+    back-reference for another asset attached to the same post. Either makes the
+    bytes public, because both mean "this file is part of a published post".
     """
-    return OWNER_CACHE_CONTROL
+    statement = (
+        select(Post.id)
+        .where(
+            Post.published.is_(True),
+            or_(Post.asset_id == asset.id, Post.id == asset.post_id),
+        )
+        .limit(1)
+    )
+    return await session.scalar(statement) is not None
 
 
 async def create_asset(
@@ -133,13 +147,20 @@ async def load_for_read(
 ) -> StoredAsset:
     """Return an asset the caller may read, or raise the documented 404.
 
-    A missing row, another owner's row, a missing file, and a corrupt key are all
-    `404`: each of them must look identical from outside.
+    A missing row, another owner's row, a missing file, a corrupt key, and a
+    denied public read are all `404`: each of them must look identical from
+    outside.
     """
+    published_post = False
     async with session_scope(session_factory) as session:
         asset = await session.get(Asset, asset_id)
-    if asset is None or not can_read(asset, user_id=user_id):
-        raise _not_found()
+        if asset is None:
+            raise _not_found()
+        is_owner = user_id is not None and asset.user_id == user_id
+        if not is_owner:
+            published_post = await _is_published_post_asset(session, asset)
+        if not can_read(asset, user_id=user_id, published_post=published_post):
+            raise _not_found()
     try:
         stored = storage.stat(asset.storage_key)
     except (OSError, StorageError):
@@ -147,7 +168,7 @@ async def load_for_read(
     return StoredAsset(
         asset=asset,
         file=stored,
-        cache_control=cache_control_for(asset),
+        cache_control=PUBLIC_CACHE_CONTROL if published_post else OWNER_CACHE_CONTROL,
     )
 
 

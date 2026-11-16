@@ -21,6 +21,8 @@ from app.db.models import (
     Message,
     Model,
     Plan,
+    Post,
+    PostLike,
     User,
     UserSession,
 )
@@ -155,6 +157,27 @@ def make_asset(user_id: UUID, **overrides: Any) -> Asset:
     }
     values.update(overrides)
     return Asset(**values)
+
+
+def make_post(**overrides: Any) -> Post:
+    values: dict[str, Any] = {
+        "author_id": None,
+        "asset_id": None,
+        "modality": "image",
+        "title": "A gallery post",
+        "prompt": "A lighthouse at dusk",
+        "model_id": "test-model",
+        "params": {"aspectRatio": "4:5"},
+        "published": True,
+    }
+    values.update(overrides)
+    return Post(**values)
+
+
+def make_post_like(post_id: UUID, user_id: UUID, **overrides: Any) -> PostLike:
+    values: dict[str, Any] = {"post_id": post_id, "user_id": user_id}
+    values.update(overrides)
+    return PostLike(**values)
 
 
 async def add_model(session: AsyncSession, **overrides: Any) -> Model:
@@ -836,4 +859,198 @@ async def test_deleting_a_user_cascades_assets(db_session: AsyncSession) -> None
     count = await db_session.scalar(
         select(func.count()).select_from(Asset).where(Asset.user_id == user_id)
     )
+    assert count == 0
+
+
+# --- Posts and likes ---------------------------------------------------------
+
+
+async def test_post_accepts_valid_state(db_session: AsyncSession) -> None:
+    user = await add_user(db_session)
+    await add_model(db_session)
+    post = make_post(author_id=user.id)
+
+    db_session.add(post)
+    await db_session.flush()
+
+    assert post.published is True
+    assert post.params == {"aspectRatio": "4:5"}
+    assert post.asset_id is None
+    assert post.created_at.tzinfo is not None
+    assert post.created_at.utcoffset() == timedelta(0)
+
+
+async def test_post_accepts_an_author_and_an_asset(db_session: AsyncSession) -> None:
+    user = await add_user(db_session)
+    await add_model(db_session)
+    asset = make_asset(user.id)
+    db_session.add(asset)
+    await db_session.flush()
+
+    post = make_post(author_id=user.id, asset_id=asset.id)
+    db_session.add(post)
+    await db_session.flush()
+
+    assert post.author_id == user.id
+    assert post.asset_id == asset.id
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"modality": "audio"},
+        {"title": ""},
+        {"title": "   "},
+        {"prompt": ""},
+        {"prompt": "   "},
+        {"params": ["not", "an", "object"]},
+        {"model_id": "missing-model"},
+        {"author_id": uuid4()},
+        {"asset_id": uuid4()},
+    ],
+)
+async def test_post_constraints(db_session: AsyncSession, overrides: dict[str, Any]) -> None:
+    await add_model(db_session)
+    db_session.add(make_post(**overrides))
+
+    with pytest.raises(IntegrityError):
+        await db_session.flush()
+
+
+async def test_a_post_can_be_unpublished(db_session: AsyncSession) -> None:
+    await add_model(db_session)
+    post = make_post(published=False)
+    db_session.add(post)
+
+    await db_session.flush()
+
+    assert post.published is False
+
+
+async def test_a_post_asset_cannot_be_deleted_while_referenced(
+    db_session: AsyncSession,
+) -> None:
+    user = await add_user(db_session)
+    await add_model(db_session)
+    asset = make_asset(user.id)
+    db_session.add(asset)
+    await db_session.flush()
+    db_session.add(make_post(author_id=user.id, asset_id=asset.id))
+    await db_session.flush()
+
+    await db_session.delete(asset)
+
+    with pytest.raises(IntegrityError):
+        await db_session.flush()
+
+
+async def test_deleting_an_author_keeps_the_post(db_session: AsyncSession) -> None:
+    author = await add_user(db_session)
+    await add_model(db_session)
+    post = make_post(author_id=author.id)
+    db_session.add(post)
+    await db_session.flush()
+
+    await db_session.delete(author)
+    await db_session.flush()
+    await db_session.refresh(post)
+
+    assert post.author_id is None
+
+
+async def test_deleting_a_post_cascades_its_likes(db_session: AsyncSession) -> None:
+    author = await add_user(db_session)
+    liker = await add_user(db_session, email="liker@example.com")
+    await add_model(db_session)
+    post = make_post(author_id=author.id)
+    db_session.add(post)
+    await db_session.flush()
+    db_session.add(make_post_like(post.id, liker.id))
+    await db_session.flush()
+
+    await db_session.delete(post)
+    await db_session.flush()
+
+    count = await db_session.scalar(select(func.count()).select_from(PostLike))
+    assert count == 0
+
+
+async def test_deleting_a_post_releases_the_asset_back_reference(
+    db_session: AsyncSession,
+) -> None:
+    user = await add_user(db_session)
+    await add_model(db_session)
+    post = make_post(author_id=user.id)
+    db_session.add(post)
+    await db_session.flush()
+    asset = make_asset(user.id, post_id=post.id)
+    db_session.add(asset)
+    await db_session.flush()
+
+    await db_session.delete(post)
+    await db_session.flush()
+    await db_session.refresh(asset)
+
+    assert asset.post_id is None
+
+
+async def test_post_like_accepts_valid_state(db_session: AsyncSession) -> None:
+    user = await add_user(db_session)
+    await add_model(db_session)
+    post = make_post()
+    db_session.add(post)
+    await db_session.flush()
+
+    like = make_post_like(post.id, user.id)
+    db_session.add(like)
+    await db_session.flush()
+
+    assert like.created_at.tzinfo is not None
+    assert like.created_at.utcoffset() == timedelta(0)
+
+
+async def test_post_like_is_unique_per_account(db_session: AsyncSession) -> None:
+    user = await add_user(db_session)
+    await add_model(db_session)
+    post = make_post()
+    db_session.add(post)
+    await db_session.flush()
+    db_session.add(make_post_like(post.id, user.id))
+    await db_session.flush()
+
+    db_session.add(make_post_like(post.id, user.id))
+
+    with pytest.raises(IntegrityError):
+        await db_session.flush()
+
+
+@pytest.mark.parametrize("missing", ["post_id", "user_id"])
+async def test_post_like_requires_a_post_and_a_user(db_session: AsyncSession, missing: str) -> None:
+    user = await add_user(db_session)
+    await add_model(db_session)
+    post = make_post()
+    db_session.add(post)
+    await db_session.flush()
+
+    values = {"post_id": post.id, "user_id": user.id}
+    values[missing] = uuid4()
+    db_session.add(PostLike(**values))
+
+    with pytest.raises(IntegrityError):
+        await db_session.flush()
+
+
+async def test_deleting_a_liker_cascades_the_like(db_session: AsyncSession) -> None:
+    liker = await add_user(db_session, email="liker@example.com")
+    await add_model(db_session)
+    post = make_post()
+    db_session.add(post)
+    await db_session.flush()
+    db_session.add(make_post_like(post.id, liker.id))
+    await db_session.flush()
+
+    await db_session.delete(liker)
+    await db_session.flush()
+
+    count = await db_session.scalar(select(func.count()).select_from(PostLike))
     assert count == 0

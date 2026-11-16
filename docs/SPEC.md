@@ -810,6 +810,40 @@ Seed 16 posts with bundled assets (`scripts/seed.py`), matching the frontend dem
 variety. Remix is frontend-only: the post payload contains the prompt, model, and params
 needed to prefill a workspace. Users cannot publish Generations in v1.
 
+`GET /v1/explore/posts` is public, ordered by `createdAt` descending with `id` as the
+tiebreaker, and returns at most `limit` (1–100, default 20) items. `nextCursor` is set
+only when another page exists. `modality` and `modelId` filter the gallery; an unknown
+model id is an empty page, not an error. A malformed cursor is `400 invalid_request`,
+and the cursor is a position in one ordering, not a snapshot: follow it with the same
+filters.
+
+A post carries the prompt, Model, and params needed to remix it, plus the fields a
+gallery renders:
+
+```json
+{ "id": "0193...", "modality": "image", "title": "Coastal light",
+  "prompt": "A lighthouse at dusk", "modelId": "image-demo",
+  "params": {"aspectRatio": "4:5"},
+  "author": {"id": "0193...", "displayName": "Mara Ellison", "initials": "ME"},
+  "asset": {"id": "0193...", "url": "/v1/assets/0193...", "mimeType": "image/png",
+            "width": 1200, "height": 1500, "durationMs": null},
+  "likeCount": 12, "likedByMe": false, "createdAt": "2026-11-15T12:00:00Z" }
+```
+
+`author` is null for a post without an account author, and `asset` is null for a chat
+post. `likedByMe` is false for a signed-out reader. `GET /v1/explore/posts/{id}`
+returns the same shape; an unknown or unpublished id is `404 not_found`.
+
+`POST` and `DELETE /v1/explore/posts/{id}/like` require a session and answer `204`
+with no body. Both are idempotent: a repeated like leaves one row, and a repeated
+unlike leaves none. An unknown or unpublished post is `404 not_found`, so a like
+request cannot discover drafts.
+
+An asset is readable by its owner, or by anyone when a published post covers it
+(`posts.asset_id`) or attaches it (`assets.post_id`). A non-owner read of a published
+asset uses `Cache-Control: public, max-age=86400`; the owner keeps
+`private, max-age=3600`.
+
 ## 14. Configuration
 
 Environment variables (validated at startup; fail fast on missing required values):
