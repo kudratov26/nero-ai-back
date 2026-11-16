@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.api.assets import router as assets_router
 from app.api.auth import router as auth_router
 from app.api.body_limit import RequestBodyLimitMiddleware
 from app.api.catalog import router as catalog_router
@@ -23,6 +24,7 @@ from app.db.session import create_engine, create_session_factory
 from app.domain import messages as message_service
 from app.providers.base import ChatProvider
 from app.providers.openai_compatible import build_chat_provider
+from app.storage.local import LocalStorage
 
 
 def create_app(
@@ -46,6 +48,7 @@ def create_app(
         app.state.session_factory = create_session_factory(engine)
         provider = chat_provider if chat_provider is not None else build_chat_provider(resolved)
         app.state.chat_provider = provider
+        app.state.storage = LocalStorage(resolved.storage_dir)
         try:
             yield
         finally:
@@ -78,6 +81,7 @@ def create_app(
     app.include_router(catalog_router)
     app.include_router(credits_router)
     app.include_router(chats_router)
+    app.include_router(assets_router)
     return app
 
 

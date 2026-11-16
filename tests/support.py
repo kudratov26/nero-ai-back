@@ -61,6 +61,10 @@ PUBLIC_ROUTES: tuple[RouteCase, ...] = (
     RouteCase("POST", "/v1/auth/logout", 204),
     RouteCase("POST", "/v1/auth/signup", 400, "invalid_request"),
     RouteCase("POST", "/v1/auth/login", 400, "invalid_request"),
+    # Asset delivery is readable anonymously only when a published post owns the
+    # asset (B4.2). A random id is `404`, never `401`: a signed-out reader must
+    # not learn whether an asset exists.
+    RouteCase("GET", "/v1/assets/{asset_id}", 404, "not_found"),
 )
 
 PROTECTED_ROUTES: tuple[RouteCase, ...] = (
@@ -104,6 +108,7 @@ PATH_PARAM_SAMPLES: dict[str, str] = {
     "session_id": "0193a0e0-0000-7000-8000-000000000000",
     "model_id": "model-does-not-exist",
     "chat_id": "0193a0e0-0000-7000-8000-000000000000",
+    "asset_id": "0193a0e0-0000-7000-8000-000000000000",
 }
 
 

@@ -191,10 +191,14 @@ on retry.
 **Gate:** anonymous browse works; likes are idempotent and authenticated; assets are
 permission-checked and traversal-safe.
 
-- [ ] **B4.1 Assets schema and delivery**
+- [x] **B4.1 Assets schema and delivery**
   - `assets` table, local storage adapter, `GET /v1/assets/{id}`.
   - Owner or published-post permission; ETag, cache headers, range support.
   - Acceptance: permission tests, path traversal test, range request test.
+    Owner delivery is implemented in `tests/integration/test_assets.py`;
+    traversal safety is in `tests/unit/test_storage.py` plus the symlink test;
+    published-post access joins the same permission helper in B4.2, when `posts`
+    exists.
 
 - [ ] **B4.2 Posts and likes**
   - `posts`, `post_likes` tables, routes, cursor pagination, `likedByMe`.

@@ -21,8 +21,8 @@ dist/
 htmlcov/
 coverage.xml
 
-# Runtime data
-storage/
+# Runtime data (the local asset root; app/storage is source code)
+/storage/
 postgres-data/
 *.log
 *.sqlite3
