@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal, Self
 
 from pydantic import field_validator, model_validator
@@ -66,6 +67,11 @@ class Settings(BaseSettings):
     ai_request_timeout_seconds: float = 120.0
     generation_mode: GenerationMode = "mock"
 
+    # Assets are served from local disk in dev. The S3 adapter is not implemented,
+    # so a non-local backend fails at startup instead of writing to the wrong place.
+    storage_backend: Literal["local"] = "local"
+    storage_dir: Path = Path("./storage")
+
     @field_validator("log_level", mode="before")
     @classmethod
     def _normalize_log_level(cls, value: object) -> object:
@@ -113,6 +119,17 @@ class Settings(BaseSettings):
         if value <= 0:
             raise ValueError("AI_REQUEST_TIMEOUT_SECONDS must be positive")
         return value
+
+    @field_validator("storage_dir", mode="before")
+    @classmethod
+    def _require_storage_dir(cls, value: object) -> object:
+        """Never let a blank `STORAGE_DIR` resolve to the current directory."""
+        if value is None:
+            return Path("./storage")
+        text = str(value).strip()
+        if not text:
+            raise ValueError("STORAGE_DIR must not be blank")
+        return Path(text)
 
     @field_validator("rate_limit_backend")
     @classmethod

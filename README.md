@@ -26,7 +26,9 @@ client disconnect, cancels the provider, persists the partial reply as `cancelle
 its reservation, and rejects a repeated `clientId` with `409 duplicate_message`; B3.5
 verifies the real Coarena gateway with `provider-check` and one streamed
 `deepseek-v4-1-flash-1017` reply whose usage is persisted and whose Credit is committed
-from the reservation.
+from the reservation. Phase 4 is in progress: B4.1 adds the `assets` table, a local storage
+adapter that refuses keys outside its root, and `GET /v1/assets/{id}` with owner permission,
+`ETag`, cache headers, and HTTP Range delivery.
 
 ## Read first
 

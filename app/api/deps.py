@@ -64,3 +64,25 @@ async def get_current_auth(
 ) -> AuthContext:
     token = request.cookies.get(settings.session_cookie_name)
     return await authenticate(session_factory, token=token)
+
+
+async def get_optional_auth(
+    request: Request,
+    settings: Annotated[Settings, Depends(get_app_settings)],
+    session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
+) -> AuthContext | None:
+    """Resolve a session when one is present, without rejecting anonymous callers.
+
+    Only routes that must answer to signed-out readers use this. A bad or expired
+    cookie is treated as anonymous rather than `401`, because the asset route
+    reports a denied read as `404` and must not reveal session state.
+    """
+    token = request.cookies.get(settings.session_cookie_name)
+    if not token:
+        return None
+    try:
+        return await authenticate(session_factory, token=token)
+    except ApiError as exc:
+        if exc.code is ErrorCode.UNAUTHORIZED:
+            return None
+        raise

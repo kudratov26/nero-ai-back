@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import generate_session_token, hash_session_token
 from app.db.models import (
+    Asset,
     Chat,
     CreditAccount,
     CreditLedgerEntry,
@@ -139,6 +140,21 @@ def make_message(user_id: UUID, chat_id: UUID, **overrides: Any) -> Message:
     }
     values.update(overrides)
     return Message(**values)
+
+
+def make_asset(user_id: UUID, **overrides: Any) -> Asset:
+    asset_id = uuid4()
+    values: dict[str, Any] = {
+        "user_id": user_id,
+        "kind": "image",
+        "storage_key": f"assets/{user_id}/{asset_id}.png",
+        "mime_type": "image/png",
+        "size_bytes": 1024,
+        "width": 600,
+        "height": 800,
+    }
+    values.update(overrides)
+    return Asset(**values)
 
 
 async def add_model(session: AsyncSession, **overrides: Any) -> Model:
@@ -742,5 +758,82 @@ async def test_deleting_a_chat_cascades_messages(db_session: AsyncSession) -> No
 
     count = await db_session.scalar(
         select(func.count()).select_from(Message).where(Message.chat_id == chat_id)
+    )
+    assert count == 0
+
+
+# --- Assets ------------------------------------------------------------------
+
+
+async def test_asset_accepts_valid_state(db_session: AsyncSession) -> None:
+    user = await add_user(db_session)
+    db_session.add(make_asset(user.id))
+
+    await db_session.flush()
+
+    asset = await db_session.scalar(select(Asset).where(Asset.user_id == user.id))
+    assert asset is not None
+    assert asset.kind == "image"
+    assert (asset.size_bytes, asset.width, asset.height) == (1024, 600, 800)
+    assert asset.duration_ms is None
+    assert asset.generation_id is None
+    assert asset.post_id is None
+    assert asset.created_at.tzinfo is not None
+    assert asset.created_at.utcoffset() == timedelta(0)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"kind": "audio"},
+        {"storage_key": ""},
+        {"storage_key": "/absolute/path.png"},
+        {"storage_key": "../escape.png"},
+        {"storage_key": "assets/../escape.png"},
+        {"storage_key": "assets\\evil.png"},
+        {"mime_type": ""},
+        {"size_bytes": -1},
+        {"width": 0},
+        {"height": 0},
+        {"duration_ms": -1},
+    ],
+)
+async def test_asset_constraints(db_session: AsyncSession, overrides: dict[str, Any]) -> None:
+    user = await add_user(db_session)
+    db_session.add(make_asset(user.id, **overrides))
+
+    with pytest.raises(IntegrityError):
+        await db_session.flush()
+
+
+async def test_asset_storage_key_is_unique(db_session: AsyncSession) -> None:
+    user = await add_user(db_session)
+    db_session.add(make_asset(user.id, storage_key="assets/shared.png"))
+    await db_session.flush()
+
+    db_session.add(make_asset(user.id, storage_key="assets/shared.png"))
+
+    with pytest.raises(IntegrityError):
+        await db_session.flush()
+
+
+async def test_an_asset_must_have_an_owner(db_session: AsyncSession) -> None:
+    db_session.add(make_asset(uuid4()))
+
+    with pytest.raises(IntegrityError):
+        await db_session.flush()
+
+
+async def test_deleting_a_user_cascades_assets(db_session: AsyncSession) -> None:
+    user = await add_user(db_session)
+    user_id = user.id
+    db_session.add(make_asset(user.id))
+    await db_session.flush()
+
+    await db_session.delete(user)
+    await db_session.flush()
+
+    count = await db_session.scalar(
+        select(func.count()).select_from(Asset).where(Asset.user_id == user_id)
     )
     assert count == 0

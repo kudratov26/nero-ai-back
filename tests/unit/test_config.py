@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
@@ -84,6 +86,23 @@ def test_redis_rate_limit_backend_is_not_supported_yet() -> None:
 
 def test_generation_mode_defaults_to_mock() -> None:
     assert make_settings().generation_mode == "mock"
+
+
+def test_storage_defaults_to_local_disk() -> None:
+    settings = make_settings()
+
+    assert settings.storage_backend == "local"
+    assert settings.storage_dir == Path("storage")
+
+
+def test_storage_dir_must_not_be_blank() -> None:
+    with pytest.raises(ValidationError):
+        make_settings(storage_dir="   ")
+
+
+def test_remote_storage_backend_is_not_supported_yet() -> None:
+    with pytest.raises(ValidationError):
+        make_settings(storage_backend="s3")
 
 
 def test_invalid_generation_mode_rejected() -> None:
