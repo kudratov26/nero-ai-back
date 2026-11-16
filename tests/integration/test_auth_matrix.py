@@ -43,6 +43,12 @@ BODY_METHODS = frozenset({"POST", "PUT", "PATCH"})
 PROTECTED_PARAM_NAMES = frozenset(
     name for case in PROTECTED_ROUTES for name in PATH_PARAM.findall(case.path)
 )
+#: Path parameters that name a public resource rather than an account-owned row.
+#: A `post_id` is deliberately reachable by every signed-in account, so an
+#: attacker cannot be refused with 404 when liking it; the like relation itself
+#: stays account-scoped and is covered in `test_explore.py`.
+PUBLIC_RESOURCE_PARAMS = frozenset({"post_id"})
+OWNED_PARAM_NAMES = PROTECTED_PARAM_NAMES - PUBLIC_RESOURCE_PARAMS
 CONFIGURED_CHAT = {
     "ai_base_url": "https://gateway.example.test/v1",
     "ai_api_key": "test-key-not-a-real-secret",
@@ -179,21 +185,26 @@ async def _victim_chat_id(victim: Account, engine: AsyncEngine) -> str:
         return str(chat.id)
 
 
-#: Path parameter -> the victim's resource the attacker must not reach. Every path
-#: parameter on a protected route needs an entry; the guard test below enforces it.
+#: Path parameter -> the victim's resource the attacker must not reach. Every
+#: account-owned parameter on a protected route needs an entry; the guard test
+#: below enforces it.
 IDOR_RESOLVERS: dict[str, Callable[[Account, AsyncEngine], Awaitable[str]]] = {
     "session_id": _victim_session_id,
     "chat_id": _victim_chat_id,
 }
 
 
-def test_every_resource_parameter_has_an_idor_resolver() -> None:
-    assert set(IDOR_RESOLVERS) == PROTECTED_PARAM_NAMES
+def test_every_owned_resource_parameter_has_an_idor_resolver() -> None:
+    assert set(IDOR_RESOLVERS) == OWNED_PARAM_NAMES
 
 
 @pytest.mark.parametrize(
     "case",
-    [case for case in PROTECTED_ROUTES if PATH_PARAM.findall(case.path)],
+    [
+        case
+        for case in PROTECTED_ROUTES
+        if PATH_PARAM.findall(case.path) and set(PATH_PARAM.findall(case.path)) <= OWNED_PARAM_NAMES
+    ],
     ids=lambda case: f"{case.method} {case.path}",
 )
 async def test_cross_user_requests_are_not_found(

@@ -8,6 +8,10 @@ relative, so the row is the only way to reach the bytes.
 The owning foreign key cascades: deleting a user removes the rows. The file on
 disk is left for the storage adapter to garbage collect, because a database
 delete and a filesystem delete cannot share a transaction.
+
+`post_id` is a back-reference to an Explore post the asset is attached to;
+`posts.asset_id` is the canonical cover link. `generation_id` gets its foreign
+key in B5.1, when the Generations table exists.
 """
 
 from __future__ import annotations
@@ -35,7 +39,7 @@ _KIND_CHECK = "kind IN ('" + "', '".join(ASSET_KINDS) + "')"
 
 
 class Asset(TimestampMixin, Base):
-    """One stored file. `generation_id` and `post_id` are filled in by later tickets."""
+    """One stored file. `generation_id` is filled in by B5.1."""
 
     __tablename__ = "assets"
     __table_args__ = (
@@ -63,7 +67,15 @@ class Asset(TimestampMixin, Base):
         index=True,
     )
     generation_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
-    post_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    post_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        # This FK and `posts.asset_id` point at each other. `use_alter` tells
+        # SQLAlchemy to add this one after both tables exist, which is also how
+        # migration 0008 applies it.
+        ForeignKey("posts.id", ondelete="SET NULL", use_alter=True),
+        nullable=True,
+        index=True,
+    )
     kind: Mapped[str] = mapped_column(Text, nullable=False)
     storage_key: Mapped[str] = mapped_column(Text, nullable=False)
     mime_type: Mapped[str] = mapped_column(Text, nullable=False)

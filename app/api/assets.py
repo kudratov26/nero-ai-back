@@ -28,8 +28,9 @@ from app.storage.local import LocalStorage
 router = APIRouter(prefix="/v1", tags=["assets"])
 
 ASSET_DESCRIPTION = (
-    "Returns the bytes for one asset. The owner may always read it; anyone else gets "
-    "404, exactly as for an unknown id. Supports conditional and Range requests."
+    "Returns the bytes for one asset. The owner may always read it and an asset on a "
+    "published Explore post is public; anyone else gets 404, exactly as for an unknown "
+    "id. Supports conditional and Range requests."
 )
 
 
