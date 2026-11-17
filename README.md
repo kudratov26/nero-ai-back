@@ -26,12 +26,16 @@ client disconnect, cancels the provider, persists the partial reply as `cancelle
 its reservation, and rejects a repeated `clientId` with `409 duplicate_message`; B3.5
 verifies the real Coarena gateway with `provider-check` and one streamed
 `deepseek-v4-1-flash-1017` reply whose usage is persisted and whose Credit is committed
-from the reservation. Phase 4 is in progress: B4.1 adds the `assets` table, a local storage
+from the reservation. Phase 4 is complete: B4.1 adds the `assets` table, a local storage
 adapter that refuses keys outside its root, and `GET /v1/assets/{id}` with owner permission,
 `ETag`, cache headers, and HTTP Range delivery; B4.2 adds the `posts` and `post_likes`
 tables, public cursor-paginated Explore list and detail routes, idempotent likes, and
 published-post asset delivery with a public cache policy; B4.3 seeds the gallery with a
-system author, sixteen posts, and bundled JPEG/MP4 media, idempotently.
+system author, sixteen posts, and bundled JPEG/MP4 media, idempotently. Phase 5 is in
+progress: B5.1 adds the `generations` table and its migration, server-owned cost
+calculation per modality, `POST /v1/generations` with a required `Idempotency-Key` and a
+Credit reservation in the same transaction, cursor-paginated listing with a status filter,
+detail, and cancel-with-refund.
 
 ## Read first
 

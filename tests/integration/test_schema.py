@@ -17,6 +17,7 @@ from app.db.models import (
     Chat,
     CreditAccount,
     CreditLedgerEntry,
+    Generation,
     IdempotencyKey,
     Message,
     Model,
@@ -142,6 +143,22 @@ def make_message(user_id: UUID, chat_id: UUID, **overrides: Any) -> Message:
     }
     values.update(overrides)
     return Message(**values)
+
+
+def make_generation(user_id: UUID, **overrides: Any) -> Generation:
+    values: dict[str, Any] = {
+        "user_id": user_id,
+        "modality": "image",
+        "model_id": "test-model",
+        "prompt": "A sunlit reading room",
+        "params": {"aspectRatio": "1:1", "count": 1, "style": "None"},
+        "status": "queued",
+        "progress": 0,
+        "cost": 5,
+        "provider": "Test",
+    }
+    values.update(overrides)
+    return Generation(**values)
 
 
 def make_asset(user_id: UUID, **overrides: Any) -> Asset:
@@ -860,6 +877,111 @@ async def test_deleting_a_user_cascades_assets(db_session: AsyncSession) -> None
         select(func.count()).select_from(Asset).where(Asset.user_id == user_id)
     )
     assert count == 0
+
+
+# --- Generations -------------------------------------------------------------
+
+
+async def test_generation_accepts_valid_state(db_session: AsyncSession) -> None:
+    user = await add_user(db_session)
+    await add_model(db_session)
+    generation = make_generation(user.id)
+
+    db_session.add(generation)
+    await db_session.flush()
+
+    assert generation.modality == "image"
+    assert generation.status == "queued"
+    assert generation.progress == 0
+    assert generation.cost == 5
+    assert generation.params == {"aspectRatio": "1:1", "count": 1, "style": "None"}
+    assert generation.attempts == 0
+    assert generation.max_attempts == 3
+    assert generation.provider_job_id is None
+    assert generation.error_code is None
+    assert generation.locked_by is None
+    assert generation.locked_at is None
+    assert generation.started_at is None
+    assert generation.finished_at is None
+    assert generation.created_at.tzinfo is not None
+    assert generation.created_at.utcoffset() == timedelta(0)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"modality": "chat"},
+        {"status": "pending"},
+        {"prompt": ""},
+        {"prompt": "x" * 4001},
+        {"params": ["not", "an", "object"]},
+        {"progress": -1},
+        {"progress": 101},
+        {"cost": -1},
+        {"attempts": -1},
+        {"max_attempts": 0},
+        {"provider": ""},
+        {"error_code": ""},
+        {"model_id": "missing-model"},
+        {"user_id": uuid4()},
+    ],
+)
+async def test_generation_constraints(db_session: AsyncSession, overrides: dict[str, Any]) -> None:
+    user = await add_user(db_session)
+    await add_model(db_session)
+    db_session.add(make_generation(**{"user_id": user.id, **overrides}))
+
+    with pytest.raises(IntegrityError):
+        await db_session.flush()
+
+
+async def test_deleting_a_user_cascades_generations(db_session: AsyncSession) -> None:
+    user = await add_user(db_session)
+    await add_model(db_session)
+    user_id = user.id
+    db_session.add(make_generation(user.id))
+    await db_session.flush()
+
+    await db_session.delete(user)
+    await db_session.flush()
+
+    count = await db_session.scalar(
+        select(func.count()).select_from(Generation).where(Generation.user_id == user_id)
+    )
+    assert count == 0
+
+
+async def test_deleting_a_generation_releases_the_asset_link(
+    db_session: AsyncSession,
+) -> None:
+    user = await add_user(db_session)
+    await add_model(db_session)
+    generation = make_generation(user.id)
+    db_session.add(generation)
+    await db_session.flush()
+    asset = make_asset(user.id, generation_id=generation.id)
+    db_session.add(asset)
+    await db_session.flush()
+
+    await db_session.delete(generation)
+    await db_session.flush()
+    await db_session.refresh(asset)
+
+    assert asset.generation_id is None
+
+
+async def test_a_generation_model_cannot_be_deleted_while_referenced(
+    db_session: AsyncSession,
+) -> None:
+    user = await add_user(db_session)
+    model = await add_model(db_session)
+    db_session.add(make_generation(user.id, model_id=model.id))
+    await db_session.flush()
+
+    await db_session.delete(model)
+
+    with pytest.raises(IntegrityError):
+        await db_session.flush()
 
 
 # --- Posts and likes ---------------------------------------------------------

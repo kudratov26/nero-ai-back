@@ -40,7 +40,8 @@ IMAGE_MODEL_DESCRIPTION = "Deterministic placeholder images for demos and tests.
 IMAGE_MODEL_CAPABILITIES: dict[str, Any] = {
     "streaming": False,
     "vision": False,
-    "aspectRatios": ["1:1", "4:5", "16:9"],
+    "aspectRatios": ["1:1", "4:5", "16:9", "9:16"],
+    "styles": ["None", "Photographic", "Cinematic", "Illustration", "Anime", "3D"],
     "maxCount": 4,
 }
 IMAGE_CREDITS = 5
@@ -51,7 +52,7 @@ VIDEO_MODEL_DESCRIPTION = "Deterministic placeholder clips for demos and tests."
 VIDEO_MODEL_CAPABILITIES: dict[str, Any] = {
     "streaming": False,
     "vision": False,
-    "aspectRatios": ["16:9", "9:16"],
+    "aspectRatios": ["16:9", "9:16", "1:1"],
     "durations": [5, 10],
 }
 VIDEO_CREDITS = 15

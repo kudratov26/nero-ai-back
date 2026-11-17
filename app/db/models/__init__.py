@@ -9,6 +9,7 @@ from __future__ import annotations
 from app.db.models.asset import Asset
 from app.db.models.chat import Chat
 from app.db.models.credit import CreditAccount, CreditLedgerEntry
+from app.db.models.generation import Generation
 from app.db.models.idempotency import IdempotencyKey
 from app.db.models.message import Message
 from app.db.models.model import Model
@@ -22,6 +23,7 @@ __all__ = [
     "Chat",
     "CreditAccount",
     "CreditLedgerEntry",
+    "Generation",
     "IdempotencyKey",
     "Message",
     "Model",

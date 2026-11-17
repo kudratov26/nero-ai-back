@@ -101,6 +101,10 @@ PROTECTED_ROUTES: tuple[RouteCase, ...] = (
         "unauthorized",
         probe_body={"content": "Probe"},
     ),
+    RouteCase("GET", "/v1/generations", 401, "unauthorized"),
+    RouteCase("POST", "/v1/generations", 401, "unauthorized"),
+    RouteCase("GET", "/v1/generations/{generation_id}", 401, "unauthorized"),
+    RouteCase("POST", "/v1/generations/{generation_id}/cancel", 401, "unauthorized"),
     # Liking is an authenticated write, even though the post itself is public.
     RouteCase("POST", "/v1/explore/posts/{post_id}/like", 401, "unauthorized"),
     RouteCase("DELETE", "/v1/explore/posts/{post_id}/like", 401, "unauthorized"),
@@ -115,6 +119,7 @@ PATH_PARAM_SAMPLES: dict[str, str] = {
     "session_id": "0193a0e0-0000-7000-8000-000000000000",
     "model_id": "model-does-not-exist",
     "chat_id": "0193a0e0-0000-7000-8000-000000000000",
+    "generation_id": "0193a0e0-0000-7000-8000-000000000000",
     "asset_id": "0193a0e0-0000-7000-8000-000000000000",
     "post_id": "0193a0e0-0000-7000-8000-000000000000",
 }
