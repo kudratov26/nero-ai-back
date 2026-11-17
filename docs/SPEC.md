@@ -750,11 +750,38 @@ GET  /v1/assets/{id}                 -> binary, permission checked
 
 Validation:
 
-- Prompt 1..4000 characters after trimming.
-- Params are validated per modality; unknown keys are ignored or rejected consistently.
-- Cost is computed from the model and params, never accepted from the client.
-- `Idempotency-Key` is required; replaying the same key and body returns the same
-  Generation. Same key with a different body returns `409 idempotency_conflict`.
+- Prompt 1..4000 characters after trimming; blank prompts are `422 invalid_request`.
+- Params are validated per modality against the model's advertised capabilities; unknown
+  keys are rejected with `422 invalid_request`, never silently ignored.
+  - Image: `aspectRatio` must be one of the model's `aspectRatios` (default `1:1`),
+    `count` is an integer from 1 to `maxCount` (default `1`), and `style` must be one of
+    the model's `styles` (default `None`).
+  - Video: `aspectRatio` must be one of the model's `aspectRatios` (default `16:9`) and
+    `duration` must be one of the model's `durations` (default `5`).
+- Cost is computed from the catalog and the validated params, never accepted from the
+  client:
+  - Image: `creditCost * count`.
+  - Video: `creditCost` for a 5-second clip and `creditCost10s` for a 10-second clip when
+    the catalog sets it; otherwise `creditCost`.
+- An unknown, unavailable, or wrong-modality model is `422 model_unavailable`. When the
+  model cannot be used, validation of its params is not attempted.
+- The row is inserted and the cost reserved in one transaction. A reservation that cannot
+  be covered is `409 insufficient_credits` and leaves no Generation and no idempotency key
+  behind.
+- `Idempotency-Key` is required; a missing, blank, or over-length key is `400
+  invalid_request`. Replaying the same key and body returns the same Generation. Same key
+  with a different body returns `409 idempotency_conflict`.
+- Create answers `202` with the queued Generation. The response carries `id`, `modality`,
+  `modelId`, `prompt`, `params`, `status`, `progress`, `cost`, `provider`, `errorCode`,
+  `assets`, `createdAt`, `startedAt`, and `finishedAt`.
+- `GET /v1/generations` is newest first, defaults to 20 items, accepts `limit` 1..100, an
+  optional `status` filter applied before pagination, and an opaque `cursor`.
+- `POST /v1/generations/{id}/cancel` answers `202`. A queued or running Generation becomes
+  `cancelled` and its reservation is refunded exactly once; a repeated cancel is a no-op.
+  A Generation that already `succeeded` or `failed` is `409 generation_not_cancellable`.
+  Every read and write is scoped by `user_id`, so another account's Generation is `404`.
+- Create is rate-limited to 10 requests per minute per user and returns `429 rate_limited`
+  with `Retry-After` beyond that.
 
 ### 12.3 Worker
 

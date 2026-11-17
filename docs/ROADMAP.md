@@ -226,7 +226,7 @@ permission-checked and traversal-safe.
 **Gate:** a queued generation completes, assets are served, Credits are correct, cancel
 and failure paths refund, and a stale worker lock recovers.
 
-- [ ] **B5.1 Generation API**
+- [x] **B5.1 Generation API**
   - `generations` table, cost calculation, validation per modality.
   - `POST /v1/generations` (202), list, detail, cancel.
   - Reserve Credits on create; idempotent by header.
@@ -350,9 +350,9 @@ B7.1 -> B7.2 -> B7.3 -> B7.4 (blocked on provider key)
 | --- | --- |
 | 0 Foundation | done |
 | 1 Accounts | complete (B1.1–B1.4) |
-| 2 Credits | not started |
-| 3 Chat | not started |
-| 4 Explore | not started |
-| 5 Generations | not started |
+| 2 Credits | complete (B2.1–B2.4) |
+| 3 Chat | complete (B3.1–B3.5) |
+| 4 Explore | complete (B4.1–B4.3) |
+| 5 Generations | in progress (B5.1) |
 | 6 Frontend | not started |
 | 7 Deploy | not started |
