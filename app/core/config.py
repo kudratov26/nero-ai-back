@@ -67,6 +67,12 @@ class Settings(BaseSettings):
     ai_request_timeout_seconds: float = 120.0
     generation_mode: GenerationMode = "mock"
 
+    # The worker runs as its own process (`python -m app.worker`). It claims queued
+    # Generations, reports progress, and recovers a lock that outlived its worker.
+    worker_concurrency: int = 2
+    worker_poll_interval_seconds: float = 1.0
+    worker_stale_after_seconds: float = 300.0
+
     # Assets are served from local disk in dev. The S3 adapter is not implemented,
     # so a non-local backend fails at startup instead of writing to the wrong place.
     storage_backend: Literal["local"] = "local"
@@ -130,6 +136,20 @@ class Settings(BaseSettings):
         if not text:
             raise ValueError("STORAGE_DIR must not be blank")
         return Path(text)
+
+    @field_validator("worker_concurrency")
+    @classmethod
+    def _validate_worker_concurrency(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("WORKER_CONCURRENCY must be at least 1")
+        return value
+
+    @field_validator("worker_poll_interval_seconds", "worker_stale_after_seconds")
+    @classmethod
+    def _validate_worker_seconds(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("worker intervals must be positive")
+        return value
 
     @field_validator("rate_limit_backend")
     @classmethod

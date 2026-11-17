@@ -787,12 +787,25 @@ Validation:
 
 - Entry point: `python -m app.worker`.
 - Claims jobs with `SELECT ... FOR UPDATE SKIP LOCKED` where status is `queued` or a
-  `running` job is stale (locked more than 5 minutes).
-- Updates progress at meaningful boundaries; persists assets on success.
-- On failure: retry up to `max_attempts`, then mark failed and refund.
-- On cancel while queued: mark cancelled and refund immediately. While running: request a
-  provider cancel if supported; otherwise finish and discard, then refund.
-- Worker concurrency is configurable (`WORKER_CONCURRENCY`, default 2).
+  `running` job is stale (locked more than 5 minutes, `WORKER_STALE_AFTER_SECONDS`).
+- The claim transaction increments `attempts` and stamps `locked_by`/`locked_at`. A row
+  with no attempts left is failed and refunded in the same transaction rather than
+  rendered again.
+- Updates progress at meaningful boundaries; progress is monotonic and only the owning
+  worker can advance it.
+- On success: one Asset per output, the Credit reservation is committed, and the row is
+  `succeeded`, all in one transaction.
+- On failure: a retryable error requeues the row with its reservation intact; a
+  non-retryable error, or the attempt after `max_attempts`, marks it `failed`, records
+  `errorCode`, and refunds once.
+- On cancel while queued: mark cancelled and refund immediately. While running: the
+  worker observes it no longer owns the row, discards the output, and does not refund
+  again because the cancel route already did.
+- `WORKER_CONCURRENCY` (default 2), `WORKER_POLL_INTERVAL_SECONDS`, and
+  `WORKER_STALE_AFTER_SECONDS` are configurable. An idle loop runs a stale-lock sweep.
+- Structured logs carry ids, attempts, and counts only; never the prompt or the output.
+- Image and Video rendering is injected behind `GenerationProvider`. Until B5.3 supplies
+  the mock adapters, `python -m app.worker` refuses to run rather than fail every job.
 
 ### 12.4 Asset delivery
 
