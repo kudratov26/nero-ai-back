@@ -8,9 +8,10 @@ Configures logging, installs the shutdown signal handlers, and hands the stop
 event to the claim loop in `app.workers.generation`. The loop runs
 `WORKER_CONCURRENCY` of them against the queue.
 
-Image and Video rendering is injected behind `GenerationProvider`; until B5.3
-supplies the mock adapters, the loop has no provider and refuses to claim rather
-than fail every job.
+Image and Video rendering is injected behind `GenerationProvider`. With
+`GENERATION_MODE=mock` the worker builds the deterministic mock adapter
+(`app/providers/mock_generation.py`); a live mode still has no provider, so the
+loop refuses to claim rather than fail every job.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ import structlog
 
 from app.core.config import get_settings
 from app.core.logging import configure_logging
+from app.providers.mock_generation import build_mock_generation_provider
 from app.workers.generation import run_worker
 
 log = structlog.get_logger(__name__)
@@ -44,7 +46,7 @@ async def main() -> int:
         with suppress(NotImplementedError):
             loop.add_signal_handler(sig, _request_stop, sig, None)
 
-    await run_worker(settings, None, stop=stop)
+    await run_worker(settings, build_mock_generation_provider(settings), stop=stop)
     return 0
 
 

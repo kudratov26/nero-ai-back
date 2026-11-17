@@ -37,7 +37,8 @@ calculation per modality, `POST /v1/generations` with a required `Idempotency-Ke
 Credit reservation in the same transaction, cursor-paginated listing with a status filter,
 detail, and cancel-with-refund; B5.2 adds the worker queue that claims jobs with
 `FOR UPDATE SKIP LOCKED`, reports monotonic progress, recovers stale locks, retries up to
-`max_attempts`, and settles Credits exactly once.
+`max_attempts`, and settles Credits exactly once; B5.3 adds the deterministic mock image
+and video providers that run the queued jobs and persist their assets.
 
 ## Read first
 
