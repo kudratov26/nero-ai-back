@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from app.api.problems import ApiError, ErrorCode
 from app.core.config import Settings
 from app.core.ids import uuid7
-from app.db.models import Asset, Model, Post
+from app.db.models import Asset, Generation, Model, Post
 from app.db.session import create_session_factory, session_scope
 from app.domain import assets as asset_service
 from app.main import create_app
@@ -130,6 +130,30 @@ async def add_post(
         session.add(post)
         await session.flush()
         return post
+
+
+async def add_generation(
+    engine: AsyncEngine,
+    *,
+    user_id: UUID,
+    model_id: str = POST_MODEL_ID,
+) -> Generation:
+    """Create one queued Generation so `assets.generation_id` has a valid target."""
+    async with session_scope(create_session_factory(engine)) as session:
+        generation = Generation(
+            user_id=user_id,
+            modality="image",
+            model_id=model_id,
+            prompt="A generation owned by the asset tests",
+            params={"aspectRatio": "1:1", "count": 1, "style": "None"},
+            status="queued",
+            progress=0,
+            cost=0,
+            provider="Test",
+        )
+        session.add(generation)
+        await session.flush()
+        return generation
 
 
 async def test_the_owner_downloads_the_exact_bytes(
@@ -316,8 +340,8 @@ async def test_create_asset_stores_the_bytes_and_persists_the_row(
 async def test_create_asset_keeps_the_optional_links(
     asset_env: AssetEnv, engine: AsyncEngine
 ) -> None:
-    generation_id = uuid7()
     post = await add_post(engine, author_id=asset_env.user_id, asset_id=None)
+    generation = await add_generation(engine, user_id=asset_env.user_id)
 
     asset = await asset_service.create_asset(
         create_session_factory(engine),
@@ -327,11 +351,11 @@ async def test_create_asset_keeps_the_optional_links(
         mime_type="video/mp4",
         data=MP4_BYTES,
         duration_ms=10_000,
-        generation_id=generation_id,
+        generation_id=generation.id,
         post_id=post.id,
     )
 
-    assert asset.generation_id == generation_id
+    assert asset.generation_id == generation.id
     assert asset.post_id == post.id
     assert asset.duration_ms == 10_000
 

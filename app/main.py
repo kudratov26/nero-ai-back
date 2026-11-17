@@ -15,6 +15,7 @@ from app.api.chats import router as chats_router
 from app.api.credits import router as credits_router
 from app.api.csrf import OriginCheckMiddleware
 from app.api.explore import router as explore_router
+from app.api.generations import router as generations_router
 from app.api.health import router as health_router
 from app.api.problems import register_exception_handlers
 from app.api.request_context import RequestContextMiddleware
@@ -82,6 +83,7 @@ def create_app(
     app.include_router(catalog_router)
     app.include_router(credits_router)
     app.include_router(chats_router)
+    app.include_router(generations_router)
     app.include_router(assets_router)
     app.include_router(explore_router)
     return app

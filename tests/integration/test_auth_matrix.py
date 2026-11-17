@@ -20,8 +20,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from app.api.problems import ApiError, ErrorCode
-from app.db.models import Chat, UserSession
-from app.db.seed import upsert_models
+from app.db.models import Chat, Generation, UserSession
+from app.db.seed import IMAGE_CREDITS, IMAGE_MODEL_ID, MOCK_PROVIDER, upsert_models
 from app.db.session import create_session_factory, session_scope
 from app.domain import auth as auth_service
 from app.main import create_app
@@ -185,12 +185,46 @@ async def _victim_chat_id(victim: Account, engine: AsyncEngine) -> str:
         return str(chat.id)
 
 
+async def _victim_generation_id(victim: Account, engine: AsyncEngine) -> str:
+    """Return the victim's Generation, creating it once.
+
+    Like `_victim_chat_id`, this writes directly so the probe does not depend on
+    the rate-limited create route or on another suite's fixtures. The model row
+    is seeded first because `generations.model_id` points at the catalog.
+    """
+    async with session_scope(create_session_factory(engine)) as session:
+        await upsert_models(session, make_settings())
+        existing = await session.scalar(
+            select(Generation)
+            .where(Generation.user_id == victim.user_id)
+            .order_by(Generation.id)
+            .limit(1)
+        )
+        if existing is not None:
+            return str(existing.id)
+        generation = Generation(
+            user_id=victim.user_id,
+            modality="image",
+            model_id=IMAGE_MODEL_ID,
+            prompt="A victim generation",
+            params={"aspectRatio": "1:1", "count": 1, "style": "None"},
+            status="queued",
+            progress=0,
+            cost=IMAGE_CREDITS,
+            provider=MOCK_PROVIDER,
+        )
+        session.add(generation)
+        await session.flush()
+        return str(generation.id)
+
+
 #: Path parameter -> the victim's resource the attacker must not reach. Every
 #: account-owned parameter on a protected route needs an entry; the guard test
 #: below enforces it.
 IDOR_RESOLVERS: dict[str, Callable[[Account, AsyncEngine], Awaitable[str]]] = {
     "session_id": _victim_session_id,
     "chat_id": _victim_chat_id,
+    "generation_id": _victim_generation_id,
 }
 
 

@@ -10,8 +10,9 @@ disk is left for the storage adapter to garbage collect, because a database
 delete and a filesystem delete cannot share a transaction.
 
 `post_id` is a back-reference to an Explore post the asset is attached to;
-`posts.asset_id` is the canonical cover link. `generation_id` gets its foreign
-key in B5.1, when the Generations table exists.
+`posts.asset_id` is the canonical cover link. `generation_id` names the
+Generation whose output this is; deleting that Generation nulls the link rather
+than deleting the file, because an Asset is independently owned by its user.
 """
 
 from __future__ import annotations
@@ -39,7 +40,7 @@ _KIND_CHECK = "kind IN ('" + "', '".join(ASSET_KINDS) + "')"
 
 
 class Asset(TimestampMixin, Base):
-    """One stored file. `generation_id` is filled in by B5.1."""
+    """One stored file. `generation_id` names its Generation output, if any."""
 
     __tablename__ = "assets"
     __table_args__ = (
@@ -66,7 +67,12 @@ class Asset(TimestampMixin, Base):
         nullable=False,
         index=True,
     )
-    generation_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    generation_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("generations.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     post_id: Mapped[UUID | None] = mapped_column(
         Uuid(as_uuid=True),
         # This FK and `posts.asset_id` point at each other. `use_alter` tells
