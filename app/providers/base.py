@@ -7,13 +7,15 @@ subclass, whose `code` maps to the documented API problem code.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
+from uuid import UUID
 
 from app.api.problems import ErrorCode
 
 Role = Literal["system", "user", "assistant"]
+GenerationModality = Literal["image", "video"]
 
 
 @dataclass(frozen=True)
@@ -126,3 +128,72 @@ class ProviderStreamError(ProviderError):
     """The stream was malformed or the response was not an event stream."""
 
     code = ErrorCode.PROVIDER_ERROR
+
+
+class ProviderCancelledError(ProviderError):
+    """The provider aborted the job, so its output must be discarded.
+
+    A Generation cancelled while a worker is running reaches this path: the cancel
+    route already refunded the reservation, so the worker must not commit or refund
+    again.
+    """
+
+    code = ErrorCode.CONFLICT
+
+
+# --- Image and Video generation -----------------------------------------------
+
+
+@dataclass(frozen=True)
+class GenerationJob:
+    """One queued Generation, exactly as the worker needs to render it.
+
+    Carries only the fields a provider renders from. The prompt is required, so it
+    travels here rather than through logs.
+    """
+
+    generation_id: UUID
+    modality: GenerationModality
+    model: ProviderModel
+    prompt: str
+    params: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class GenerationOutput:
+    """One rendered file, before it becomes an Asset.
+
+    `data` is the encoded file. Dimensions and duration are what the catalog
+    advertises; a provider that cannot know them (a mock clip) reports the values
+    its fixture actually has.
+    """
+
+    data: bytes
+    mime_type: str
+    width: int | None = None
+    height: int | None = None
+    duration_ms: int | None = None
+
+
+async def _no_progress(_percent: int) -> None:  # pragma: no cover - a default
+    return None
+
+
+class GenerationProvider(Protocol):
+    """A backend that renders an Image or Video Generation.
+
+    `generate` reports progress through `on_progress` and returns one
+    `GenerationOutput` per requested variant. It raises a `ProviderError`
+    subclass on failure; a non-retryable error stops the job immediately, while a
+    retryable one lets the worker try again until `max_attempts` is reached.
+    `aclose` releases any pooled transport at shutdown.
+    """
+
+    async def generate(
+        self,
+        job: GenerationJob,
+        *,
+        on_progress: Callable[[int], Awaitable[None]] = _no_progress,
+    ) -> Sequence[GenerationOutput]: ...
+
+    async def aclose(self) -> None: ...

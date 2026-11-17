@@ -201,3 +201,38 @@ def test_ai_timeout_can_be_overridden() -> None:
 def test_ai_timeout_must_be_positive(value: float) -> None:
     with pytest.raises(ValidationError):
         make_settings(ai_request_timeout_seconds=value)
+
+
+def test_worker_concurrency_defaults_to_two() -> None:
+    assert make_settings().worker_concurrency == 2
+
+
+def test_worker_concurrency_can_be_overridden() -> None:
+    assert make_settings(worker_concurrency=5).worker_concurrency == 5
+
+
+@pytest.mark.parametrize("value", [0, -1])
+def test_worker_concurrency_must_be_at_least_one(value: int) -> None:
+    with pytest.raises(ValidationError):
+        make_settings(worker_concurrency=value)
+
+
+def test_worker_intervals_have_development_defaults() -> None:
+    settings = make_settings()
+
+    assert settings.worker_poll_interval_seconds == 1.0
+    assert settings.worker_stale_after_seconds == 300.0
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("worker_poll_interval_seconds", 0),
+        ("worker_poll_interval_seconds", -1),
+        ("worker_stale_after_seconds", 0),
+        ("worker_stale_after_seconds", -0.5),
+    ],
+)
+def test_worker_intervals_must_be_positive(field: str, value: float) -> None:
+    with pytest.raises(ValidationError):
+        make_settings(**{field: value})

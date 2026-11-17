@@ -106,6 +106,43 @@ async def create_asset(
     leaves an orphan the delivery path reports as `404`, never a row that points at
     missing bytes.
     """
+    async with session_scope(session_factory) as session:
+        return await add_asset(
+            session,
+            storage,
+            user_id=user_id,
+            kind=kind,
+            mime_type=mime_type,
+            data=data,
+            width=width,
+            height=height,
+            duration_ms=duration_ms,
+            generation_id=generation_id,
+            post_id=post_id,
+        )
+
+
+async def add_asset(
+    session: AsyncSession,
+    storage: LocalStorage,
+    *,
+    user_id: UUID,
+    kind: str,
+    mime_type: str,
+    data: bytes,
+    width: int | None = None,
+    height: int | None = None,
+    duration_ms: int | None = None,
+    generation_id: UUID | None = None,
+    post_id: UUID | None = None,
+) -> Asset:
+    """Insert an Asset row in the caller's transaction.
+
+    The file is still written before the insert, so the same orphan rule holds:
+    a failed transaction leaves a file no row names, never a row without bytes.
+    The worker uses this so its outputs, the Credit commit, and `succeeded` land
+    in one transaction.
+    """
     if kind not in ASSET_KINDS:
         raise ApiError(ErrorCode.INVALID_REQUEST, 400, detail=INVALID_ASSET_KIND_DETAIL)
     if not mime_type.strip() or not data:
@@ -119,23 +156,22 @@ async def create_asset(
     )
     stored = storage.write(key, data)
 
-    async with session_scope(session_factory) as session:
-        asset = Asset(
-            id=asset_id,
-            user_id=user_id,
-            generation_id=generation_id,
-            post_id=post_id,
-            kind=kind,
-            storage_key=key,
-            mime_type=mime_type,
-            size_bytes=stored.size_bytes,
-            width=width,
-            height=height,
-            duration_ms=duration_ms,
-        )
-        session.add(asset)
-        await session.flush()
-        return asset
+    asset = Asset(
+        id=asset_id,
+        user_id=user_id,
+        generation_id=generation_id,
+        post_id=post_id,
+        kind=kind,
+        storage_key=key,
+        mime_type=mime_type,
+        size_bytes=stored.size_bytes,
+        width=width,
+        height=height,
+        duration_ms=duration_ms,
+    )
+    session.add(asset)
+    await session.flush()
+    return asset
 
 
 async def load_for_read(

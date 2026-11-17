@@ -35,7 +35,9 @@ system author, sixteen posts, and bundled JPEG/MP4 media, idempotently. Phase 5 
 progress: B5.1 adds the `generations` table and its migration, server-owned cost
 calculation per modality, `POST /v1/generations` with a required `Idempotency-Key` and a
 Credit reservation in the same transaction, cursor-paginated listing with a status filter,
-detail, and cancel-with-refund.
+detail, and cancel-with-refund; B5.2 adds the worker queue that claims jobs with
+`FOR UPDATE SKIP LOCKED`, reports monotonic progress, recovers stale locks, retries up to
+`max_attempts`, and settles Credits exactly once.
 
 ## Read first
 

@@ -232,7 +232,7 @@ and failure paths refund, and a stale worker lock recovers.
   - Reserve Credits on create; idempotent by header.
   - Acceptance: cost tests, insufficient Credits, invalid params, idempotency tests.
 
-- [ ] **B5.2 Worker and queue**
+- [x] **B5.2 Worker and queue**
   - `python -m app.worker`, `FOR UPDATE SKIP LOCKED`, stale lock recovery, retries.
   - Progress updates and structured logs without prompts.
   - Acceptance: worker integration test, two workers do not double-claim, stale recovery.
@@ -353,6 +353,6 @@ B7.1 -> B7.2 -> B7.3 -> B7.4 (blocked on provider key)
 | 2 Credits | complete (B2.1–B2.4) |
 | 3 Chat | complete (B3.1–B3.5) |
 | 4 Explore | complete (B4.1–B4.3) |
-| 5 Generations | in progress (B5.1) |
+| 5 Generations | in progress (B5.1–B5.2) |
 | 6 Frontend | not started |
 | 7 Deploy | not started |
