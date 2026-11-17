@@ -6,8 +6,8 @@ uv run python -m app.cli provider-check
 ```
 
 `seed` is idempotent and safe to run on every deploy. It runs after
-`alembic upgrade head`, because the plan and model catalogs live in the database
-so prices have one authoritative home.
+`alembic upgrade head`, because the plan, model, and Explore catalogs live in the
+database so prices and the gallery have one authoritative home.
 
 `provider-check` sends one short request to the configured chat gateway and
 prints the model, status, and usage. It never prints the key, the prompt, or the
@@ -23,8 +23,9 @@ from collections.abc import Sequence
 
 import structlog
 
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging
+from app.db.explore_seed import upsert_explore
 from app.db.seed import upsert_models, upsert_plans
 from app.db.session import create_engine, create_session_factory, session_scope
 from app.providers.base import (
@@ -36,6 +37,7 @@ from app.providers.base import (
     ProviderModel,
 )
 from app.providers.openai_compatible import build_chat_provider
+from app.storage.local import LocalStorage
 
 log = structlog.get_logger(__name__)
 
@@ -49,21 +51,33 @@ PROVIDER_NOT_CONFIGURED = (
 )
 
 
-async def seed_catalog() -> None:
-    """Refresh the plan and model catalogs in one transaction."""
-    settings = get_settings()
-    engine = create_engine(settings.database_url)
+async def seed_catalog(settings: Settings | None = None) -> None:
+    """Refresh the plan, model, and Explore catalogs in one transaction.
+
+    `settings` defaults to the environment; tests pass a temporary storage root so
+    the bundled media is written there instead of the working directory.
+    """
+    resolved = settings or get_settings()
+    engine = create_engine(resolved.database_url)
+    storage = LocalStorage(resolved.storage_dir)
     try:
         factory = create_session_factory(engine)
         async with session_scope(factory) as session:
             await upsert_plans(session)
-            await upsert_models(session, settings)
+            await upsert_models(session, resolved)
+            explore = await upsert_explore(
+                session,
+                storage=storage,
+                chat_model_id=resolved.ai_chat_model,
+            )
     finally:
         await engine.dispose()
     log.info(
         "catalog.seeded",
-        generation_mode=settings.generation_mode,
-        chat_provider_configured=settings.chat_provider_configured,
+        generation_mode=resolved.generation_mode,
+        chat_provider_configured=resolved.chat_provider_configured,
+        explore_posts=explore.posts,
+        explore_assets=explore.assets,
     )
 
 

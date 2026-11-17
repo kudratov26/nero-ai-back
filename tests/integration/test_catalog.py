@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 import httpx
 import pytest
@@ -10,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.cli import seed_catalog
 from app.core.config import Settings, get_settings
+from app.db.explore_seed import POST_SEEDS, SYSTEM_AUTHOR_ID
 from app.db.models import Model
 from app.db.seed import (
     CHAT_MESSAGE_CREDITS,
@@ -297,18 +299,24 @@ async def _listed(settings: Settings) -> httpx.Response:
         return await http.get("/v1/models")
 
 
-async def test_cli_seed_writes_the_catalog(migrated_database: str, engine: AsyncEngine) -> None:
+async def test_cli_seed_writes_the_catalog(
+    migrated_database: str, engine: AsyncEngine, tmp_path: Path
+) -> None:
     """`python -m app.cli seed` refreshes both catalogs from the environment."""
-    settings = get_settings()
+    settings = get_settings().model_copy(update={"storage_dir": tmp_path / "storage"})
 
-    await seed_catalog()
+    await seed_catalog(settings)
 
     async with asgi_client(create_app(settings)) as http:
         listed = {model["id"] for model in (await http.get("/v1/models")).json()}
         plans = (await http.get("/v1/plans")).json()
+        posts = (await http.get("/v1/explore/posts?limit=100")).json()["items"]
 
     expected = {IMAGE_MODEL_ID, VIDEO_MODEL_ID} if settings.generation_mode == "mock" else set()
     if settings.chat_provider_configured:
         expected.add(settings.ai_chat_model)
     assert listed == expected
     assert [plan["id"] for plan in plans] == ["free", "pro", "studio"]
+    seeded = [post for post in posts if post["author"]["id"] == str(SYSTEM_AUTHOR_ID)]
+    assert len(seeded) == len(POST_SEEDS) == 16
+    assert all(post["asset"] is not None for post in seeded if post["modality"] != "chat")

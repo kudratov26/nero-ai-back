@@ -30,7 +30,8 @@ from the reservation. Phase 4 is in progress: B4.1 adds the `assets` table, a lo
 adapter that refuses keys outside its root, and `GET /v1/assets/{id}` with owner permission,
 `ETag`, cache headers, and HTTP Range delivery; B4.2 adds the `posts` and `post_likes`
 tables, public cursor-paginated Explore list and detail routes, idempotent likes, and
-published-post asset delivery with a public cache policy.
+published-post asset delivery with a public cache policy; B4.3 seeds the gallery with a
+system author, sixteen posts, and bundled JPEG/MP4 media, idempotently.
 
 ## Read first
 
@@ -55,7 +56,7 @@ cp .env.example .env          # fill in real values locally; never commit .env
 uv sync
 docker compose up -d db
 uv run alembic upgrade head
-uv run python -m app.cli seed  # refresh the plan and model catalogs
+uv run python -m app.cli seed  # plans, models, and the Explore gallery
 uv run uvicorn app.main:app --reload --port 8000
 
 curl http://localhost:8000/health/live
@@ -86,6 +87,12 @@ uv run python -m app.cli seed  # idempotent; run after `alembic upgrade head`
 The chat model is advertised only when `AI_BASE_URL` and `AI_API_KEY` are set. The Image
 and Video demo models are advertised only when `GENERATION_MODE=mock`. The catalog never
 lists a model whose provider is not configured.
+
+The same command seeds the Explore gallery: one system author, 16 posts, and 14 assets
+copied from the bundled JPEG/MP4 files under `app/db/seed_media/` into `STORAGE_DIR`.
+Seeded ids are deterministic, so rerunning updates those rows and restores edited fixture
+content without touching likes or other accounts' posts. `scripts/seed.py` is an alias
+(`uv run python -m scripts.seed`) for deploys that prefer the documented script path.
 
 Tests use a separate database: `nero_test` on the same server by default, overridable
 with `TEST_DATABASE_URL`. The suite recreates and migrates it once per session, so never

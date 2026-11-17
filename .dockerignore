@@ -6,7 +6,6 @@
 storage
 tests
 docs
-scripts
 __pycache__
 *.py[cod]
 .ruff_cache

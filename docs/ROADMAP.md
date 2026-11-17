@@ -208,10 +208,14 @@ permission-checked and traversal-safe.
     `tests/integration/test_explore.py`; published-post asset delivery extends
     `tests/integration/test_assets.py`. The system author and seeded posts are B4.3.
 
-- [ ] **B4.3 Seed Explore**
+- [x] **B4.3 Seed Explore**
   - `scripts/seed.py` creates the system author, 16 posts, and bundled sample assets.
   - Idempotent reseed command.
   - Acceptance: fresh DB returns 16 posts with models, prompts, and assets.
+    The fixtures and the upsert live in `app/db/explore_seed.py`; the CLI runs them
+    with the catalog seed, and `tests/integration/test_seed.py` proves the fresh
+    gallery, anonymized media delivery, stable ordering, and an idempotent rerun
+    that preserves likes.
 
 ---
 
