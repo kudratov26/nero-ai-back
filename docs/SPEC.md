@@ -807,8 +807,18 @@ DELETE /v1/explore/posts/{id}/like                    -> 204, idempotent
 ```
 
 Seed 16 posts with bundled assets (`scripts/seed.py`), matching the frontend demo's
-variety. Remix is frontend-only: the post payload contains the prompt, model, and params
-needed to prefill a workspace. Users cannot publish Generations in v1.
+variety: ten images, four clips, and two text posts. Every seeded row is owned by one
+system author, an internal Account that cannot sign in and whose `.invalid` email cannot
+be registered. Image and video posts use the `image-demo` and `video-demo` models and
+point at small JPEG/MP4 files shipped under `app/db/seed_media/`; the seed copies them
+into `STORAGE_DIR` and writes `assets` rows. Text posts use the configured chat model and
+carry no asset. Remix is frontend-only: the post payload contains the prompt, model, and
+params needed to prefill a workspace. Users cannot publish Generations in v1.
+
+Seeded ids are derived deterministically, so `python -m app.cli seed` is idempotent: a
+rerun updates the same sixteen posts and fourteen assets, restores edited fixture
+content, rewrites the bundled files, and leaves likes alone. Posts keep their fixture
+`createdAt`, so Explore ordering is stable across reseeds.
 
 `GET /v1/explore/posts` is public, ordered by `createdAt` descending with `id` as the
 tiebreaker, and returns at most `limit` (1–100, default 20) items. `nextCursor` is set

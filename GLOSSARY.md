@@ -30,6 +30,7 @@ here in the same PR.
 | **Asset** | A stored image or video file owned by an Account or attached to an Explore Post. |
 | **Explore** | The public gallery of curated Posts. |
 | **Post** | A published gallery item with a prompt, Model, params, and Asset. |
+| **System author** | The internal Account that owns seeded Explore Posts and their Assets. It has no usable password and cannot sign in. |
 | **Like** | A unique Account-to-Post relation. Likes are idempotent. |
 | **Remix** | Prefilling a workspace from a Post's prompt, Model, and params. Frontend-only; no backend endpoint. |
 | **Demo reset** | An authenticated action that deletes the caller's Chats, Generations, Assets, and likes and restores the plan Allowance. |
