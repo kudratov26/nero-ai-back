@@ -236,3 +236,13 @@ def test_worker_intervals_have_development_defaults() -> None:
 def test_worker_intervals_must_be_positive(field: str, value: float) -> None:
     with pytest.raises(ValidationError):
         make_settings(**{field: value})
+
+
+def test_hold_ttl_defaults_to_one_hour() -> None:
+    assert make_settings().hold_ttl_seconds == 3_600.0
+
+
+@pytest.mark.parametrize("value", [0, -1, -0.5])
+def test_hold_ttl_must_be_positive(value: float) -> None:
+    with pytest.raises(ValidationError):
+        make_settings(hold_ttl_seconds=value)

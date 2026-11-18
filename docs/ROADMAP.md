@@ -242,7 +242,7 @@ and failure paths refund, and a stale worker lock recovers.
   - Persist one asset per output; mark `provider: "mock"`.
   - Acceptance: image and video jobs succeed; assets have correct mime/size/dimensions.
 
-- [ ] **B5.4 Cancel, refund, and failure**
+- [x] **B5.4 Cancel, refund, and failure**
   - Cancel queued vs running; refund exactly once; failed jobs retry then refund.
   - Expired hold sweeper.
   - Acceptance: cancel tests, failure tests, no negative balance, no double refund.
@@ -353,6 +353,6 @@ B7.1 -> B7.2 -> B7.3 -> B7.4 (blocked on provider key)
 | 2 Credits | complete (B2.1–B2.4) |
 | 3 Chat | complete (B3.1–B3.5) |
 | 4 Explore | complete (B4.1–B4.3) |
-| 5 Generations | in progress (B5.1–B5.3) |
+| 5 Generations | in progress (B5.1–B5.4) |
 | 6 Frontend | not started |
 | 7 Deploy | not started |

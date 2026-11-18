@@ -435,8 +435,8 @@ Shape:
 `invalid_request`, `unauthorized`, `forbidden`, `not_found`, `conflict`,
 `duplicate_message`, `email_taken`, `invalid_credentials`, `weak_password`, `rate_limited`,
 `insufficient_credits`, `model_unavailable`, `provider_error`, `provider_timeout`,
-`generation_not_cancellable`, `idempotency_conflict`, `origin_not_allowed`,
-`payload_too_large`, `internal_error`.
+`generation_not_cancellable`, `hold_expired`, `idempotency_conflict`,
+`origin_not_allowed`, `payload_too_large`, `internal_error`.
 
 Mapping: 400 validation, 401 unauthenticated, 403 authorization/CSRF, 404 missing or not
 owned, 409 state conflicts, 422 semantic validation, 429 rate limit, 502/504 provider,
@@ -801,8 +801,15 @@ Validation:
 - On cancel while queued: mark cancelled and refund immediately. While running: the
   worker observes it no longer owns the row, discards the output, and does not refund
   again because the cancel route already did.
-- `WORKER_CONCURRENCY` (default 2), `WORKER_POLL_INTERVAL_SECONDS`, and
-  `WORKER_STALE_AFTER_SECONDS` are configurable. An idle loop runs a stale-lock sweep.
+- Before each claim the loop settles expired holds: a `queued` Generation whose hold is
+  older than `HOLD_TTL_SECONDS`, a `running` Generation whose lock is older than the same
+  cutoff, and an assistant message left `streaming` past it are marked `failed` with
+  `errorCode: "hold_expired"`. Only the Credits still held for that reference in the
+  ledger are refunded, so a committed or already-refunded reservation is never refunded
+  twice. A `running` job with a fresh lock is left alone.
+- `WORKER_CONCURRENCY` (default 2), `WORKER_POLL_INTERVAL_SECONDS`,
+  `WORKER_STALE_AFTER_SECONDS`, and `HOLD_TTL_SECONDS` (default 3600) are configurable.
+  An idle loop runs a stale-lock sweep.
 - Structured logs carry ids, attempts, and counts only; never the prompt or the output.
 - Image and Video rendering is injected behind `GenerationProvider`. With
   `GENERATION_MODE=mock` the worker builds the deterministic mock adapter; a live
