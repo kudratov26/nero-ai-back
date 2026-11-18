@@ -980,7 +980,11 @@ Environment variables (validated at startup; fail fast on missing required value
 - On `409 insufficient_credits`, link to `/pricing`; do not retry automatically.
 - Map backend `problem+json` codes to the existing toast copy.
 - Generate TypeScript types from `openapi.json` and fail CI when the committed schema
-  differs.
+  differs. The snapshot is committed at the repository root; `scripts/export_openapi.py`
+  refreshes it and `--check` fails when it is stale. Additive changes (new optional field,
+  path, enum value, relaxed validation) are allowed; removing or renaming a field or path,
+  changing a type, making an optional field required, or tightening validation is breaking
+  and needs an ADR plus coordinated frontend regeneration.
 - Delete or disable the local password/auth path in API mode; never run both sources of
   truth at once.
 - Required flows: signup, login, logout, chat streaming, chat history, credits, image,

@@ -156,6 +156,22 @@ service and treats the backend as the source of truth. The contract is defined i
 `docs/SPEC.md`; the backend exports `openapi.json` and the frontend generates its types
 from it.
 
+### OpenAPI snapshot
+
+The committed `openapi.json` at the repository root is the snapshot the frontend
+generates types from. Regenerate it in the same pull request that changes the routes or
+schemas:
+
+```bash
+uv run python -m scripts.export_openapi       # refresh openapi.json
+uv run python -m scripts.export_openapi --check   # what CI runs; fails when stale
+```
+
+Policy: additive changes are allowed (a new optional field, path, enum value, or relaxed
+validation). Removing or renaming a field or path, changing a type, making an optional field
+required, or tightening validation is breaking; it needs an ADR and coordinated frontend
+regeneration before it can merge.
+
 ## Security
 
 - Never commit `.env` or a provider key.
