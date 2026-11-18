@@ -44,6 +44,7 @@ class ErrorCode(StrEnum):
     PROVIDER_ERROR = "provider_error"
     PROVIDER_TIMEOUT = "provider_timeout"
     GENERATION_NOT_CANCELLABLE = "generation_not_cancellable"
+    HOLD_EXPIRED = "hold_expired"
     IDEMPOTENCY_CONFLICT = "idempotency_conflict"
     ORIGIN_NOT_ALLOWED = "origin_not_allowed"
     PAYLOAD_TOO_LARGE = "payload_too_large"

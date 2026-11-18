@@ -52,6 +52,9 @@ class Message(TimestampMixin, UpdatedAtMixin, Base):
             name="client_id_not_blank",
         ),
         Index("ix_messages_chat_id_created_at", "chat_id", "created_at"),
+        # The expired-hold sweeper finds assistant rows left `streaming` by a
+        # handler that died before it could settle the reservation.
+        Index("ix_messages_status_updated_at", "status", "updated_at"),
         # A client-generated id identifies one user message in one chat. The
         # partial predicate keeps every assistant row (client_id null) out.
         Index(

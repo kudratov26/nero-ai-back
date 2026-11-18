@@ -17,33 +17,34 @@ the next claim tries again. When `attempts` reaches `max_attempts`, the job fail
 instead. A lock older than `stale_after` belongs to a worker that died, so the next
 claim takes it over rather than leaving the job stuck forever.
 
+Before each claim the loop sweeps expired holds (`app.domain.holds`), so a
+reservation that outlived `HOLD_TTL_SECONDS` is refunded rather than rendered.
+
 Logs carry ids, attempts, and counts. They never carry the prompt or the output.
 """
 
 from __future__ import annotations
 
 import asyncio
-import signal
 import socket
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from datetime import timedelta
-from types import FrameType
 from uuid import uuid4
 
 import structlog
 
-from app.core.config import Settings, get_settings
-from app.core.logging import configure_logging
+from app.core.config import Settings
 from app.db.session import create_engine, create_session_factory
-from app.domain import generation_worker
+from app.domain import generation_worker, holds
 from app.providers.base import GenerationProvider
 from app.storage.local import LocalStorage
 
 log = structlog.get_logger(__name__)
 
 WORKER_NOT_CONFIGURED = (
-    "The generation worker has no provider. Image and Video renderers arrive in B5.3."
+    "The generation worker has no provider. Set GENERATION_MODE=mock for the "
+    "deterministic adapter, or configure a real image/video provider."
 )
 
 
@@ -73,6 +74,7 @@ async def run_worker(
     factory = create_session_factory(engine)
     resolved_storage = storage or LocalStorage(settings.storage_dir)
     stale_after = timedelta(seconds=settings.worker_stale_after_seconds)
+    hold_ttl = timedelta(seconds=settings.hold_ttl_seconds)
     poll_interval = settings.worker_poll_interval_seconds
     stop = stop or asyncio.Event()
 
@@ -80,6 +82,9 @@ async def run_worker(
         name = worker_id(f"worker-{index}")
         log.info("worker.started", worker_id=name, stale_after_seconds=stale_after.total_seconds())
         while not stop.is_set():
+            # Sweep before claiming: an expired hold must be failed and refunded
+            # rather than rendered, and the claim below would otherwise take it.
+            await holds.sweep_expired_holds(factory, older_than=hold_ttl)
             worked = await generation_worker.process_one(
                 factory,
                 resolved_storage,
@@ -103,26 +108,3 @@ async def run_worker(
         await provider.aclose()
         await engine.dispose()
         log.info("worker.stopped")
-
-
-async def main() -> int:
-    """Entry point: configure logging, install signal handlers, and run."""
-    settings = get_settings()
-    configure_logging(settings)
-    stop = asyncio.Event()
-
-    def _request_stop(_signum: int, _frame: FrameType | None) -> None:
-        log.info("worker.shutdown_requested")
-        stop.set()
-
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        with suppress(NotImplementedError):
-            loop.add_signal_handler(sig, _request_stop, sig, None)
-
-    await run_worker(settings, None, stop=stop)
-    return 0
-
-
-if __name__ == "__main__":  # pragma: no cover - process entry point
-    raise SystemExit(asyncio.run(main()))

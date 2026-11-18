@@ -73,6 +73,10 @@ class Settings(BaseSettings):
     worker_poll_interval_seconds: float = 1.0
     worker_stale_after_seconds: float = 300.0
 
+    # A reservation that outlives this long is considered stranded: its owner
+    # never settled it, so the sweeper fails the work and refunds the hold.
+    hold_ttl_seconds: float = 3600.0
+
     # Assets are served from local disk in dev. The S3 adapter is not implemented,
     # so a non-local backend fails at startup instead of writing to the wrong place.
     storage_backend: Literal["local"] = "local"
@@ -149,6 +153,13 @@ class Settings(BaseSettings):
     def _validate_worker_seconds(cls, value: float) -> float:
         if value <= 0:
             raise ValueError("worker intervals must be positive")
+        return value
+
+    @field_validator("hold_ttl_seconds")
+    @classmethod
+    def _validate_hold_ttl(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("HOLD_TTL_SECONDS must be positive")
         return value
 
     @field_validator("rate_limit_backend")
