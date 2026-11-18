@@ -12,14 +12,14 @@ route never mounts the storage directory, so the only way to reach a file is an
 
 from __future__ import annotations
 
-from typing import Annotated, cast
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.api.deps import get_optional_auth, get_session_factory
+from app.api.deps import get_optional_auth, get_session_factory, get_storage
 from app.api.problems import PROBLEM_MEDIA_TYPE, ProblemDetail
 from app.domain import assets as asset_service
 from app.domain.auth import AuthContext
@@ -32,14 +32,6 @@ ASSET_DESCRIPTION = (
     "published Explore post is public; anyone else gets 404, exactly as for an unknown "
     "id. Supports conditional and Range requests."
 )
-
-
-def get_storage(request: Request) -> LocalStorage:
-    """Return the app-wide storage adapter built by the lifespan."""
-    storage = getattr(request.app.state, "storage", None)
-    if storage is None:
-        raise RuntimeError("the storage adapter is not initialized")
-    return cast(LocalStorage, storage)
 
 
 @router.get(
