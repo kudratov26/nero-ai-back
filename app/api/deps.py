@@ -12,6 +12,7 @@ from app.core.config import Settings
 from app.core.rate_limit import MemoryRateLimiter
 from app.domain.auth import AuthContext, authenticate
 from app.providers.base import ChatProvider
+from app.storage.local import LocalStorage
 
 
 def get_app_settings(request: Request) -> Settings:
@@ -36,6 +37,14 @@ def get_chat_provider(request: Request) -> ChatProvider | None:
     """Return the configured chat provider, or `None` when the gateway is unset."""
     provider = getattr(request.app.state, "chat_provider", None)
     return cast(ChatProvider | None, provider)
+
+
+def get_storage(request: Request) -> LocalStorage:
+    """Return the app-wide storage adapter built by the lifespan."""
+    storage = getattr(request.app.state, "storage", None)
+    if storage is None:
+        raise RuntimeError("the storage adapter is not initialized")
+    return cast(LocalStorage, storage)
 
 
 def enforce_rate_limit(

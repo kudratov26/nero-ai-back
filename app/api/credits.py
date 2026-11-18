@@ -1,17 +1,22 @@
-"""Credit endpoints: summary, paginated ledger, and the simulated plan change.
+"""Credit endpoints: summary, paginated ledger, plan change, and demo reset.
 
-All three are caller-scoped. Reads map the account the auth dependency already
-loaded; the writes go through `app.domain.billing`.
+All four are caller-scoped. Reads map the account the auth dependency already
+loaded; the writes go through their domain service.
 """
 
 from __future__ import annotations
 
 from typing import Annotated, cast
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.api.deps import get_app_settings, get_current_auth, get_session_factory
+from app.api.deps import (
+    get_app_settings,
+    get_current_auth,
+    get_session_factory,
+    get_storage,
+)
 from app.api.problems import PROBLEM_MEDIA_TYPE, ApiError, ErrorCode, ProblemDetail
 from app.api.responses import credits_summary, me_response
 from app.api.schemas.auth import CreditsSummary, MeResponse
@@ -24,8 +29,9 @@ from app.api.schemas.credits import (
 )
 from app.core.config import Settings
 from app.db.models import CreditLedgerEntry
-from app.domain import billing
+from app.domain import billing, demo
 from app.domain.auth import AuthContext
+from app.storage.local import LocalStorage
 
 router = APIRouter(prefix="/v1", tags=["credits"])
 
@@ -121,3 +127,22 @@ async def change_plan(
         plan_id=body.plan_id,
     )
     return me_response(AuthContext(user=user, session=context.session, plan=plan, account=account))
+
+
+@router.post(
+    "/demo/reset",
+    status_code=204,
+    summary="Reset the demo workspace",
+    description=(
+        "Deletes the caller's Chats, Generations, Assets, likes, and create idempotency "
+        "records, then restores the current plan allowance with one `reset` ledger "
+        "entry. Published Explore posts and other accounts are untouched. Idempotent."
+    ),
+)
+async def reset_demo(
+    context: Annotated[AuthContext, Depends(get_current_auth)],
+    session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
+    storage: Annotated[LocalStorage, Depends(get_storage)],
+) -> Response:
+    await demo.reset_workspace(session_factory, storage, user_id=context.user.id)
+    return Response(status_code=204)

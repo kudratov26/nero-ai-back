@@ -340,10 +340,12 @@ never deleted, so pages stay stable while new entries are appended.
 `409 conflict`; when plan changes are disabled the route is `404 not_found`. Plan changes
 are only a simulated refill and never touch a payment provider.
 
-Demo reset refunds any held Credits, deletes the user's Chats, Generations, Assets, and
-likes, then restores the current plan allowance with a `reset` ledger entry. It never
-touches the user row, password, or published Explore posts. It is idempotent and only
-affects the caller.
+Demo reset (`POST /v1/demo/reset`, `204`) refunds any held Credits, deletes the user's
+Chats (and their Messages), Generations, Assets and their stored bytes, likes, and create
+idempotency records, then restores the current plan allowance with a single `reset` ledger
+entry (`refType: "demo_reset"`). It writes no entry when the account already sits at the
+allowance with no hold, so it is idempotent. It never touches the user row, password, or
+published Explore posts, and it only affects the caller.
 
 ## 8. Models
 

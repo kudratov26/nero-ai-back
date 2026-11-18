@@ -40,7 +40,8 @@ detail, and cancel-with-refund; B5.2 adds the worker queue that claims jobs with
 `max_attempts`, and settles Credits exactly once; B5.3 adds the deterministic mock image
 and video providers that run the queued jobs and persist their assets; B5.4 adds the
 expired-hold sweeper that fails and refunds a stranded Generation or chat message exactly
-once.
+once; B5.5 adds `POST /v1/demo/reset`, which clears only the caller's Chats, Generations,
+Assets, likes, and idempotency records and restores the plan allowance.
 
 ## Read first
 

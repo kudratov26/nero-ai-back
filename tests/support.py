@@ -80,6 +80,7 @@ PROTECTED_ROUTES: tuple[RouteCase, ...] = (
     RouteCase("GET", "/v1/credits", 401, "unauthorized"),
     RouteCase("GET", "/v1/credits/ledger", 401, "unauthorized"),
     RouteCase("POST", "/v1/account/plan", 401, "unauthorized"),
+    RouteCase("POST", "/v1/demo/reset", 401, "unauthorized"),
     RouteCase("GET", "/v1/chats", 401, "unauthorized"),
     RouteCase("POST", "/v1/chats", 401, "unauthorized"),
     RouteCase("GET", "/v1/chats/{chat_id}", 401, "unauthorized"),

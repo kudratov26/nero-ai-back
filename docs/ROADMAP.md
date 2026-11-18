@@ -247,7 +247,7 @@ and failure paths refund, and a stale worker lock recovers.
   - Expired hold sweeper.
   - Acceptance: cancel tests, failure tests, no negative balance, no double refund.
 
-- [ ] **B5.5 Demo reset across all resources**
+- [x] **B5.5 Demo reset across all resources**
   - `POST /v1/demo/reset` deletes only the caller's Chats, Generations, Assets, and likes,
     then restores the current plan allowance with a `reset` ledger entry.
   - Acceptance: two-user isolation test; reset is idempotent; allowance restored exactly
@@ -353,6 +353,6 @@ B7.1 -> B7.2 -> B7.3 -> B7.4 (blocked on provider key)
 | 2 Credits | complete (B2.1–B2.4) |
 | 3 Chat | complete (B3.1–B3.5) |
 | 4 Explore | complete (B4.1–B4.3) |
-| 5 Generations | in progress (B5.1–B5.4) |
+| 5 Generations | complete (B5.1–B5.5) |
 | 6 Frontend | not started |
 | 7 Deploy | not started |
