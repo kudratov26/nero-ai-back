@@ -37,6 +37,7 @@ from app.providers.base import (
     ProviderUnavailableError,
 )
 from app.providers.fake_generation import TINY_PNG, FakeGenerationProvider
+from app.providers.mock_generation import MockGenerationProvider
 from app.storage.local import LocalStorage
 from app.workers.generation import run_worker
 from tests.support import make_settings
@@ -678,6 +679,75 @@ async def test_a_zero_cost_generation_succeeds_without_a_commit(
 
     assert (await generation_row(worker_env, generation_id)).status == "succeeded"
     assert await ledger_kinds(worker_env, generation_id) == []
+
+
+# --- The mock provider end to end --------------------------------------------
+
+
+async def test_a_mock_image_generation_persists_png_assets(
+    worker_env: WorkerEnv,
+) -> None:
+    generation_id = await seed_generation(
+        worker_env,
+        params={"aspectRatio": "16:9", "count": 2, "style": "None"},
+    )
+    provider = MockGenerationProvider()
+
+    worked = await generation_worker.process_one(
+        worker_env.factory,
+        worker_env.storage,
+        provider,
+        worker_id="worker-test",
+        stale_after=STALE_AFTER,
+    )
+
+    assert worked is True
+    row = await generation_row(worker_env, generation_id)
+    assert row.status == "succeeded"
+    assert row.provider == "Demo"
+
+    assets = await assets_for(worker_env, generation_id)
+    assert len(assets) == 2
+    for asset in assets:
+        assert asset.kind == "image"
+        assert asset.mime_type == "image/png"
+        assert asset.width == 640
+        assert asset.height == 360
+        assert asset.size_bytes > 8_000
+        assert worker_env.storage.path_for(asset.storage_key).read_bytes()[:8] == TINY_PNG[:8]
+
+
+async def test_a_mock_video_generation_persists_an_mp4_asset(
+    worker_env: WorkerEnv,
+) -> None:
+    generation_id = await seed_generation(
+        worker_env,
+        modality="video",
+        model_id=VIDEO_MODEL_ID,
+        params={"aspectRatio": "16:9", "duration": 5},
+    )
+    provider = MockGenerationProvider()
+
+    worked = await generation_worker.process_one(
+        worker_env.factory,
+        worker_env.storage,
+        provider,
+        worker_id="worker-test",
+        stale_after=STALE_AFTER,
+    )
+
+    assert worked is True
+    row = await generation_row(worker_env, generation_id)
+    assert row.status == "succeeded"
+    assert row.provider == "Demo"
+
+    assets = await assets_for(worker_env, generation_id)
+    assert len(assets) == 1
+    assert assets[0].kind == "video"
+    assert assets[0].mime_type == "video/mp4"
+    assert assets[0].duration_ms == 5_000
+    assert (assets[0].width, assets[0].height) == (640, 360)
+    assert assets[0].size_bytes > 8_000
 
 
 # --- The worker process loop -----------------------------------------------

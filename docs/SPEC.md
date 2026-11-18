@@ -804,8 +804,9 @@ Validation:
 - `WORKER_CONCURRENCY` (default 2), `WORKER_POLL_INTERVAL_SECONDS`, and
   `WORKER_STALE_AFTER_SECONDS` are configurable. An idle loop runs a stale-lock sweep.
 - Structured logs carry ids, attempts, and counts only; never the prompt or the output.
-- Image and Video rendering is injected behind `GenerationProvider`. Until B5.3 supplies
-  the mock adapters, `python -m app.worker` refuses to run rather than fail every job.
+- Image and Video rendering is injected behind `GenerationProvider`. With
+  `GENERATION_MODE=mock` the worker builds the deterministic mock adapter; a live
+  mode still has no provider, so the loop refuses to claim rather than fail every job.
 
 ### 12.4 Asset delivery
 
