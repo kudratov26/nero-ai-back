@@ -263,24 +263,24 @@ mode.
 **Gate:** signup, login, chat streaming, history, credits, image, video, explore likes,
 reset, and plan change work against the backend in a staging build.
 
-- [ ] **B6.1 OpenAPI and generated types**
+- [x] **B6.1 OpenAPI and generated types**
   - Commit `openapi.json`; CI check that regeneration is clean.
   - Document the breakage policy and additive changes.
   - Acceptance: snapshot test; schema diff required for route changes.
 
-- [ ] **B6.2 Frontend proxy and HTTP adapter** _(frontend repo PR)_
+- [x] **B6.2 Frontend proxy and HTTP adapter** _(frontend repo PR: `nero-ai-front` #27)_
   - Next rewrite `/api/*` to the backend using server-only `API_URL`.
   - `HttpServices` implementing the existing service interfaces; `NEXT_PUBLIC_DATA_MODE`.
   - Cookie auth, 401 handling, error-code mapping.
   - Acceptance: local mode and API mode both build; adapter tests against a fake server.
 
-- [ ] **B6.3 Golden path against the backend**
+- [x] **B6.3 Golden path against the backend** _(frontend repo PR: `nero-ai-front` #28)_
   - Playwright: signup, chat stream, history reload, image/video mock generation, explore
     like, demo reset, plan change.
   - Backend runs with fake provider and fresh database.
   - Acceptance: test is deterministic and passes in CI.
 
-- [ ] **B6.4 Documentation and handoff**
+- [x] **B6.4 Documentation and handoff**
   - README quick start, env table, API examples, troubleshooting.
   - Update `GLOSSARY.md` and any ADR touched.
   - Acceptance: a new developer can run the stack from the README alone.
@@ -354,5 +354,5 @@ B7.1 -> B7.2 -> B7.3 -> B7.4 (blocked on provider key)
 | 3 Chat | complete (B3.1–B3.5) |
 | 4 Explore | complete (B4.1–B4.3) |
 | 5 Generations | complete (B5.1–B5.5) |
-| 6 Frontend | not started |
+| 6 Frontend | complete (B6.1–B6.4; B6.2–B6.3 shipped in `nero-ai-front`) |
 | 7 Deploy | not started |

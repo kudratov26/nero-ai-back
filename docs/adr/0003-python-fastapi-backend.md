@@ -7,10 +7,10 @@ Supersedes: the v1-only assumptions in ADR-0001
 ## Context
 
 ADR-0001 kept v1 entirely in the browser: localStorage/IndexedDB repositories and
-fixture providers. ADR-0002 said any real auth, generation, or payments would arrive with
-a backend rather than a Next.js route handler. We now need multi-user accounts, a shared
-Credit ledger, persistent Chats and Generations, and real model access. The model key
-must never reach the browser.
+fixture providers. ADR-0002 (in the frontend repository, `nero-ai-front`) said any real
+auth, generation, or payments would arrive with a backend rather than a Next.js route
+handler. We now need multi-user accounts, a shared Credit ledger, persistent Chats and
+Generations, and real model access. The model key must never reach the browser.
 
 ## Decision
 

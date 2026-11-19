@@ -1,47 +1,19 @@
 # Nero AI backend
 
-Python backend for the Nero AI frontend. It owns real accounts, sessions, a
+Python backend for the Nero AI frontend. It owns real Accounts, sessions, a
 server-authoritative Credit ledger, Chats, Generations, Assets, and provider access.
+The browser never receives a provider key.
 
-**Status:** Phase 0 complete, Phase 1 complete. B1.1 provides the user, session, plan,
-and Credit schema plus Argon2id and opaque session-token primitives; B1.2 provides
-`signup`, `login`, `logout`, and `/v1/auth/me` with atomic Free-plan provisioning; B1.3
-adds profile and password updates, session listing and revocation, the Origin check on
-unsafe methods, login/signup rate limits, and the 1 MiB request body cap; B1.4 adds the
-authorization test matrix that fails when a route ships without an auth decision. Phase 2
-is complete: B2.1 adds the `models` table, its migration, the seed step, and the public
-`GET /v1/plans`, `GET /v1/models`, and `GET /v1/models/{id}` catalog reads; B2.2 adds the
-Credit ledger service (`reserve`, `commit`, `refund`, `grant`, `reset`) with row locking
-and an append-only ledger; B2.3 exposes `GET /v1/credits`, the cursor-paginated
-`GET /v1/credits/ledger`, and the simulated `POST /v1/account/plan`; B2.4 adds the
-`idempotency_keys` table and the create-once helper that replays a retried request. Phase 3
-is complete: B3.1 adds the `ChatProvider` port, DTOs, and error taxonomy, the
-OpenAI-compatible streaming adapter used for the Coarena/DeepSeek gateway, a deterministic
-fake provider for tests, and `python -m app.cli provider-check`; B3.2 adds the `chats` table
-and its migration, chat create/read/rename/soft-delete routes, opaque-cursor listing, and
-the ownership rule that reports another account's chat as `404`; B3.3 adds the `messages`
-table, cursor-paginated history, and the streamed reply endpoint that persists both turns,
-reserves and settles Credits, emits heartbeats, and refunds a failed reply; B3.4 detects a
-client disconnect, cancels the provider, persists the partial reply as `cancelled`, refunds
-its reservation, and rejects a repeated `clientId` with `409 duplicate_message`; B3.5
-verifies the real Coarena gateway with `provider-check` and one streamed
-`deepseek-v4-1-flash-1017` reply whose usage is persisted and whose Credit is committed
-from the reservation. Phase 4 is complete: B4.1 adds the `assets` table, a local storage
-adapter that refuses keys outside its root, and `GET /v1/assets/{id}` with owner permission,
-`ETag`, cache headers, and HTTP Range delivery; B4.2 adds the `posts` and `post_likes`
-tables, public cursor-paginated Explore list and detail routes, idempotent likes, and
-published-post asset delivery with a public cache policy; B4.3 seeds the gallery with a
-system author, sixteen posts, and bundled JPEG/MP4 media, idempotently. Phase 5 is in
-progress: B5.1 adds the `generations` table and its migration, server-owned cost
-calculation per modality, `POST /v1/generations` with a required `Idempotency-Key` and a
-Credit reservation in the same transaction, cursor-paginated listing with a status filter,
-detail, and cancel-with-refund; B5.2 adds the worker queue that claims jobs with
-`FOR UPDATE SKIP LOCKED`, reports monotonic progress, recovers stale locks, retries up to
-`max_attempts`, and settles Credits exactly once; B5.3 adds the deterministic mock image
-and video providers that run the queued jobs and persist their assets; B5.4 adds the
-expired-hold sweeper that fails and refunds a stranded Generation or chat message exactly
-once; B5.5 adds `POST /v1/demo/reset`, which clears only the caller's Chats, Generations,
-Assets, likes, and idempotency records and restores the plan allowance.
+**Status:** v1 is feature-complete through Phase 6. Accounts, sessions, Credits, Chats,
+Generations with a worker queue, Explore, asset delivery, and demo reset run against
+PostgreSQL; the Next.js app consumes this service in API mode; the committed
+`openapi.json` is the contract both sides generate from. Phase 7 (hardening and
+deployment) is next.
+
+Image and Video are deterministic mock providers until a real provider key and adapter
+exist. They are labelled `Demo`, and the catalog never advertises a model whose provider
+is not configured. Chat runs on DeepSeek V4.1 Flash through the Coarena gateway when
+`AI_BASE_URL` and `AI_API_KEY` are set.
 
 ## Read first
 
@@ -59,21 +31,192 @@ Assets, likes, and idempotency records and restores the plan allowance.
 - httpx, uv, ruff, mypy, pytest
 - Docker Compose for local PostgreSQL
 
-## Local development
+## Quick start
+
+Prerequisites: Python 3.12 with [`uv`](https://docs.astral.sh/uv/), and Docker for the
+local PostgreSQL container.
 
 ```bash
-cp .env.example .env          # fill in real values locally; never commit .env
+# 1. Configure and install. `.env` is gitignored; placeholders are enough for a
+#    local run with mock Image/Video and no chat provider.
+cp .env.example .env
 uv sync
-docker compose up -d db
-uv run alembic upgrade head
-uv run python -m app.cli seed  # plans, models, and the Explore gallery
-uv run uvicorn app.main:app --reload --port 8000
 
-curl http://localhost:8000/health/live
-curl http://localhost:8000/health/ready
+# 2. PostgreSQL 16. `--wait` blocks until the healthcheck passes.
+#    Data persists in the `postgres-data` volume.
+docker compose up -d --wait db
+
+# 3. Schema, plans, model catalog, and the Explore gallery. Idempotent.
+uv run alembic upgrade head
+uv run python -m app.cli seed
+
+# 4. API on http://localhost:8000
+uv run uvicorn app.main:app --reload --port 8000
 ```
 
-## Database
+Start the Generation worker in a second terminal. It reads the same `.env`,
+`DATABASE_URL`, and `STORAGE_DIR` as the API:
+
+```bash
+# 5. Worker: claims queued Image/Video jobs and settles their Credits.
+uv run python -m app.worker
+```
+
+Check the processes:
+
+```bash
+curl -sS http://localhost:8000/health/live    # {"status":"ok"}
+curl -sS http://localhost:8000/health/ready   # {"status":"ready"} once migrated
+```
+
+`/health/ready` answers `503` until the database is reachable and Alembic is at head.
+It never echoes driver messages or connection strings. Interactive API docs are at
+`http://localhost:8000/docs` (disabled in production); the raw schema is
+`/openapi.json`.
+
+Which models appear depends on configuration:
+
+```bash
+curl -sS http://localhost:8000/v1/models
+```
+
+- The chat model appears only when `AI_BASE_URL` and `AI_API_KEY` are both set.
+- `image-demo` and `video-demo` appear only while `GENERATION_MODE=mock`.
+- Re-run `uv run python -m app.cli seed` after changing either setting; a model that is
+  no longer configured is marked unavailable, never silently advertised.
+
+## First requests
+
+Unsafe methods (`POST`, `PUT`, `PATCH`, `DELETE`) require an `Origin` header that matches
+`FRONTEND_ORIGIN` (or the API's own origin). The session lives in an HttpOnly cookie, so
+curl keeps it in a jar.
+
+```bash
+# Sign up; 201 returns the user, plan, and Credits and writes the session cookie.
+curl -sS -c cookies.txt \
+  -H 'Origin: http://localhost:3000' -H 'Content-Type: application/json' \
+  -d '{"email":"demo@example.com","password":"correct horse battery","displayName":"Demo"}' \
+  http://localhost:8000/v1/auth/signup
+
+# Who am I, and how many Credits are available?
+curl -sS -b cookies.txt http://localhost:8000/v1/auth/me
+curl -sS -b cookies.txt http://localhost:8000/v1/credits
+```
+
+A queued Image job costs 5 Credits per image and needs the worker:
+
+```bash
+curl -sS -b cookies.txt \
+  -H 'Origin: http://localhost:3000' -H 'Content-Type: application/json' \
+  -H "Idempotency-Key: $(uuidgen)" \
+  -d '{"modality":"image","modelId":"image-demo","prompt":"A sunlit reading room","params":{"aspectRatio":"4:5","count":1,"style":"Cinematic"}}' \
+  http://localhost:8000/v1/generations
+
+# Poll the id from the 202 response until status is "succeeded" or "failed".
+curl -sS -b cookies.txt http://localhost:8000/v1/generations/$GENERATION_ID
+```
+
+The response's `assets[0].url` is a permission-checked `GET /v1/assets/{id}`; send the
+cookie. A video job uses `"modality":"video"`, `"modelId":"video-demo"`, and
+`{"aspectRatio":"16:9","duration":5}`.
+
+Chat streaming needs the chat provider. Create a chat and then post a message with
+`Accept: text/event-stream`; the events are documented in `docs/SPEC.md` §10.3:
+
+```bash
+CHAT_ID=$(curl -sS -b cookies.txt \
+  -H 'Origin: http://localhost:3000' -H 'Content-Type: application/json' \
+  -d '{"title":"Launch plan","modelId":"deepseek-v4.1-flash"}' \
+  http://localhost:8000/v1/chats | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+
+curl -sS -N -b cookies.txt \
+  -H 'Origin: http://localhost:3000' -H 'Content-Type: application/json' \
+  -H 'Accept: text/event-stream' \
+  -d '{"content":"Give me three campaign angles."}' \
+  "http://localhost:8000/v1/chats/$CHAT_ID/messages"
+```
+
+Demo reset clears the caller's workspace and restores the current plan allowance. It
+returns `204`, is idempotent, and never touches the user row or published Explore posts:
+
+```bash
+curl -sS -b cookies.txt -X POST -H 'Origin: http://localhost:3000' \
+  -o /dev/null -w '%{http_code}\n' http://localhost:8000/v1/demo/reset
+```
+
+Errors are RFC 9457 `application/problem+json` with a stable `code` such as
+`insufficient_credits`, `model_unavailable`, or `hold_expired`. The full list is in
+`docs/SPEC.md` §9.
+
+## Environment variables
+
+`app/core/config.py` is the validator; missing required values fail at startup. `.env` is
+gitignored, and `.env.example` contains placeholders only.
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `APP_ENV` | `development` | `development`, `test`, or `production`. |
+| `APP_SECRET` | dev placeholder | Must be a real value in production; never reuse the placeholder. |
+| `LOG_LEVEL` | `info` | Structured JSON logs. |
+| `DATABASE_URL` | required | `postgresql+asyncpg://...`; migrations and runtime use it. |
+| `FRONTEND_ORIGIN` | `http://localhost:3000` | Allowed `Origin` for unsafe methods and the proxy origin. |
+| `SESSION_COOKIE_NAME` | `nero_session` | |
+| `SESSION_TTL_DAYS` | `30` | Sessions are revocable server-side. |
+| `COOKIE_SECURE` | derived | True in production; `false` is rejected when `APP_ENV=production`. |
+| `RATE_LIMIT_BACKEND` | `memory` | `redis` is not implemented and fails at startup, by design. |
+| `MAX_REQUEST_BODY_BYTES` | `1048576` | 1 MiB cap; larger bodies are `413 payload_too_large`. |
+| `AI_BASE_URL` | unset | Coarena gateway base URL. Blank disables the chat model. |
+| `AI_API_KEY` | unset | Server-only; never log, commit, or return it. |
+| `AI_CHAT_MODEL` | `deepseek-v4.1-flash` | Must exist on the gateway. |
+| `AI_REQUEST_TIMEOUT_SECONDS` | `120` | Read timeout for one provider call. |
+| `GENERATION_MODE` | `mock` | `live` has no Image/Video adapter yet, so those models stay unadvertised. |
+| `STORAGE_BACKEND` | `local` | Only `local` is implemented; S3 is Phase 7. |
+| `STORAGE_DIR` | `./storage` | Asset root. The API and worker must share it. |
+| `WORKER_CONCURRENCY` | `2` | Number of claim loops in the worker process. |
+| `WORKER_POLL_INTERVAL_SECONDS` | `1` | Sleep between empty claims. |
+| `WORKER_STALE_AFTER_SECONDS` | `300` | A lock older than this is recovered. |
+| `HOLD_TTL_SECONDS` | `3600` | Expired holds are failed and refunded exactly once. |
+| `ALLOW_SIMULATED_PLAN_CHANGES` | true outside production | `POST /v1/account/plan` is a simulated refill, never a payment; set `false` in production. |
+| `SENTRY_DSN` | unset | Reserved; error reporting is not wired yet. |
+
+Production additionally requires a real `APP_SECRET`, secure cookies (`COOKIE_SECURE`
+unset or true; `false` is rejected), HTTPS at the reverse proxy, and a provider spend cap.
+
+## Frontend in API mode
+
+Run the backend on `8000` and the frontend on `3000`. In the frontend repository
+(`nero-ai-front`), `.env.local` selects the backend:
+
+```dotenv
+NEXT_PUBLIC_DATA_MODE=api
+API_URL=http://127.0.0.1:8000
+NEXT_PUBLIC_FRONTEND_ORIGIN=http://localhost:3000
+```
+
+- `API_URL` is server-only. The Next.js `/api/*` proxy forwards to `${API_URL}/v1/*`,
+  which keeps cookies first-party and avoids CORS.
+- The proxy forwards the browser's `Origin`; the backend's `FRONTEND_ORIGIN` must match
+  the origin used to open the frontend.
+- Restart `npm run dev` after changing `API_URL` or `NEXT_PUBLIC_DATA_MODE`.
+- The worker must be running for Image/Video jobs to leave `queued`.
+- `NEXT_PUBLIC_DATA_MODE=local` keeps the browser-only demo mode; never run both sources
+  of truth at once.
+
+The committed `openapi.json` at the repository root is the snapshot the frontend
+generates types from. Regenerate it in the same pull request that changes routes or
+schemas:
+
+```bash
+uv run python -m scripts.export_openapi          # refresh openapi.json
+uv run python -m scripts.export_openapi --check  # what CI runs; fails when stale
+```
+
+Policy: additive changes are allowed (a new optional field, path, enum value, or relaxed
+validation). Removing or renaming a field or path, changing a type, making an optional
+field required, or tightening validation is breaking; it needs an ADR and coordinated
+frontend regeneration before it can merge.
+
+## Database and seeding
 
 Migrations live in `alembic/versions/`. The URL comes from `DATABASE_URL`; never put a
 real URL in `alembic.ini`.
@@ -84,53 +227,62 @@ uv run alembic current                  # show the applied revision
 uv run alembic revision -m "add table"  # create a migration
 ```
 
-Migration `0002` seeds the Free, Pro, and Studio plan catalog. `app.db.seed.upsert_plans`
-refreshes the same rows idempotently, so it is safe to run on every deploy.
-
-The `models` catalog (migration `0003`) is seeded at runtime instead, because a model's
-availability depends on configuration:
+Migration `0002` seeds the Free, Pro, and Studio plans. The `models` catalog and the
+Explore gallery are seeded at runtime because availability depends on configuration:
 
 ```bash
 uv run python -m app.cli seed  # idempotent; run after `alembic upgrade head`
 ```
 
-The chat model is advertised only when `AI_BASE_URL` and `AI_API_KEY` are set. The Image
-and Video demo models are advertised only when `GENERATION_MODE=mock`. The catalog never
-lists a model whose provider is not configured.
+`seed` refreshes plans and models, retires models that are no longer configured, and
+copies 16 posts plus 14 bundled JPEG/MP4 assets from `app/db/seed_media/` into
+`STORAGE_DIR`. Seeded ids are deterministic, so rerunning restores fixture content
+without touching likes or other accounts' posts. `uv run python -m scripts.seed` is an
+alias for deploys that prefer a script path.
 
-The same command seeds the Explore gallery: one system author, 16 posts, and 14 assets
-copied from the bundled JPEG/MP4 files under `app/db/seed_media/` into `STORAGE_DIR`.
-Seeded ids are deterministic, so rerunning updates those rows and restores edited fixture
-content without touching likes or other accounts' posts. `scripts/seed.py` is an alias
-(`uv run python -m scripts.seed`) for deploys that prefer the documented script path.
+Tests use a separate database (`nero_test` by default, overridable with
+`TEST_DATABASE_URL`). The suite drops and recreates it once per session, so never point
+it at a database you care about.
 
-Tests use a separate database: `nero_test` on the same server by default, overridable
-with `TEST_DATABASE_URL`. The suite recreates and migrates it once per session, so never
-point it at a database you care about.
+## Tests and checks
 
-## Checks
-
-CI runs these on every pull request; run them locally before opening one.
+CI runs these on every pull request; run them locally before opening one:
 
 ```bash
 uv run ruff format --check .
 uv run ruff check .
 uv run mypy app
+uv run python -m scripts.export_openapi --check
 uv run pytest --cov=app --cov-report=term-missing --cov-fail-under=75
 docker build -t nero-ai-back:dev .
 ```
 
-Worker (from Phase 5):
+The suite needs PostgreSQL running (`docker compose up -d --wait db`); it recreates
+`nero_test` itself. Target coverage is 85% for `app/domain` and `app/providers`, and 75%
+overall.
+
+Provider probe, when the chat gateway is configured:
 
 ```bash
-uv run python -m app.worker
+uv run python -m app.cli provider-check  # one round trip; never prints the key, prompt, or reply
 ```
 
-Provider probe (Phase 3):
+## Troubleshooting
 
-```bash
-uv run python -m app.cli provider-check
-```
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `403 origin_not_allowed` on a write | Missing or mismatched `Origin` header | Send the frontend origin (default `http://localhost:3000`) or call through the Next proxy. |
+| `/health/ready` returns `503` | Database down or migrations pending | `docker compose up -d --wait db`, then `uv run alembic upgrade head`. |
+| Startup rejects settings | `APP_ENV=production` with the placeholder secret or `COOKIE_SECURE=false`, or `RATE_LIMIT_BACKEND=redis` | Set real production values; Redis is not implemented, keep `memory` for one instance. |
+| `/v1/models` has no chat model | `AI_BASE_URL` or `AI_API_KEY` unset | Set both, then re-run `uv run python -m app.cli seed`. |
+| `/v1/models` has no Image/Video models | `GENERATION_MODE` is not `mock` | Set `GENERATION_MODE=mock` and reseed. |
+| A Generation stays `queued` | Worker is not running or points at another database | Start `uv run python -m app.worker` with the same `.env`. |
+| A Generation fails with `hold_expired` | Its reservation outlived `HOLD_TTL_SECONDS` (worker stalled) | Restart the worker; the sweeper refunds the hold exactly once. |
+| An asset URL returns `404` | API and worker use different `STORAGE_DIR`, or the file was removed | Point both processes at the same directory; re-run `seed` for fixture media. |
+| `401 unauthorized` from the frontend proxy | No valid session cookie (expired or signed out) | Sign in again; confirm `API_URL` and restart the dev server after env changes. |
+| `429 rate_limited` while testing | Signup is 3/hour per IP; login 5/15 min; chat 30/min; generations 10/min | Wait for `Retry-After` or reuse an existing session. |
+| `409 duplicate_message` on a retried chat turn | The same `clientId` was already used in that chat | Refetch history instead of retrying the same id. |
+| Tests cannot connect | PostgreSQL not running or `TEST_DATABASE_URL` wrong | Start the database; the suite creates and migrates its own test database. |
 
 ## Repository layout
 
@@ -149,33 +301,16 @@ docs/           spec, roadmap, ADRs, agent docs
 scripts/        seed and maintenance commands
 ```
 
-## Frontend relationship
-
-The frontend remains local-first in demo mode. In API mode it proxies `/api/*` to this
-service and treats the backend as the source of truth. The contract is defined in
-`docs/SPEC.md`; the backend exports `openapi.json` and the frontend generates its types
-from it.
-
-### OpenAPI snapshot
-
-The committed `openapi.json` at the repository root is the snapshot the frontend
-generates types from. Regenerate it in the same pull request that changes the routes or
-schemas:
-
-```bash
-uv run python -m scripts.export_openapi       # refresh openapi.json
-uv run python -m scripts.export_openapi --check   # what CI runs; fails when stale
-```
-
-Policy: additive changes are allowed (a new optional field, path, enum value, or relaxed
-validation). Removing or renaming a field or path, changing a type, making an optional field
-required, or tightening validation is breaking; it needs an ADR and coordinated frontend
-regeneration before it can merge.
-
 ## Security
 
-- Never commit `.env` or a provider key.
-- Never log prompts, message content, cookies, or authorization headers.
+- Never commit `.env` or a provider key. Rotate any key that has been pasted into a
+  commit, an issue, or a chat.
+- Never log prompts, message content, model output, cookies, or Authorization headers.
 - Plan changes are simulated in v1. Do not enable paid plans in production without a
   real payment integration.
-- Image and Video are deterministic mocks until real provider credentials exist.
+- Image and Video are deterministic mocks until real provider credentials exist. Never
+  present mock output as a real model run.
+- Use the same-origin frontend proxy. If direct cross-origin access is ever added, allow
+  only the exact `FRONTEND_ORIGIN`; wildcard origins with credentials are never allowed.
+- `RATE_LIMIT_BACKEND=memory` is single-instance only. Add the Redis backend before
+  scaling out.

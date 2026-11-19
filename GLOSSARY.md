@@ -27,18 +27,21 @@ here in the same PR.
 | **Message** | One user or assistant turn inside a Chat. |
 | **Stream** | Server-Sent Events delivered while an assistant Message is produced. |
 | **Generation** | A persisted Image or Video job with status, progress, cost, and Assets. |
+| **Worker** | The separate process (`python -m app.worker`) that claims queued Generations, renders them with the configured provider, and settles their Credits. |
 | **Asset** | A stored image or video file owned by an Account or attached to an Explore Post. |
 | **Explore** | The public gallery of curated Posts. |
 | **Post** | A published gallery item with a prompt, Model, params, and Asset. |
 | **System author** | The internal Account that owns seeded Explore Posts and their Assets. It has no usable password and cannot sign in. |
 | **Like** | A unique Account-to-Post relation. Likes are idempotent. |
 | **Remix** | Prefilling a workspace from a Post's prompt, Model, and params. Frontend-only; no backend endpoint. |
-| **Demo reset** | An authenticated action that deletes the caller's Chats, Generations, Assets, and likes and restores the plan Allowance. |
+| **Demo reset** | An authenticated action that deletes the caller's Chats and Messages, Generations, Assets and their bytes, likes, and create-idempotency records, and restores the plan Allowance. |
 | **Demo mode** | The frontend-only local-first mode that uses localStorage and fixtures. No backend. |
 | **API mode** | The frontend mode that treats this backend as the source of truth. |
 | **Mock provider** | A deterministic in-process provider used for Image/Video in development and CI. Clearly labelled; never presented as a real model run. |
 | **Idempotency key** | A client-supplied key that makes retrying a create operation safe. Same key + same body returns the original resource. |
 | **Problem details** | The RFC 9457 error shape returned as `application/problem+json`. |
+| **Cursor** | An opaque token that points at the next page of a list. Clients pass it back unchanged and never parse it. |
+| **OpenAPI snapshot** | The committed `openapi.json` rendered from the app. It is the contract the frontend generates its types from; CI fails when it is stale. |
 | **Gate** | The acceptance checklist that must pass before the next roadmap phase starts. |
 | **Hold expiry** | The deadline after which an uncommitted reservation is refunded and its work marked failed. |
 | **IDOR** | Insecure direct object reference. Prevented by scoping every query to the authenticated user. |

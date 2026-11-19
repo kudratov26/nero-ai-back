@@ -922,13 +922,17 @@ Environment variables (validated at startup; fail fast on missing required value
 | `AI_CHAT_MODEL` | chat | `deepseek-v4.1-flash` | confirm exact slug with the gateway |
 | `AI_REQUEST_TIMEOUT_SECONDS` | no | `120` | read timeout |
 | `GENERATION_MODE` | no | `mock` | mock or live |
-| `STORAGE_DIR` | no | `./storage` | local asset root |
+| `STORAGE_DIR` | no | `./storage` | local asset root; the API and worker must share it |
 | `STORAGE_BACKEND` | no | `local` | local or s3 |
+| `WORKER_CONCURRENCY` | no | `2` | claim loops in the worker process |
+| `WORKER_POLL_INTERVAL_SECONDS` | no | `1` | sleep between empty claims |
+| `WORKER_STALE_AFTER_SECONDS` | no | `300` | recover a lock older than this |
+| `HOLD_TTL_SECONDS` | no | `3600` | expired holds are failed and refunded once |
 | `ALLOW_SIMULATED_PLAN_CHANGES` | no | `true` in dev | false in production |
 | `RATE_LIMIT_BACKEND` | no | `memory` | memory or redis |
 | `MAX_REQUEST_BODY_BYTES` | no | `1048576` | 1 MiB request body cap |
 | `LOG_LEVEL` | no | `info` | |
-| `SENTRY_DSN` | no | — | optional |
+| `SENTRY_DSN` | no | — | reserved; error reporting is not wired yet |
 
 `.env` is gitignored. `.env.example` contains placeholders only.
 
