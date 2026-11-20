@@ -929,7 +929,7 @@ Environment variables (validated at startup; fail fast on missing required value
 | `WORKER_STALE_AFTER_SECONDS` | no | `300` | recover a lock older than this |
 | `HOLD_TTL_SECONDS` | no | `3600` | expired holds are failed and refunded once |
 | `ALLOW_SIMULATED_PLAN_CHANGES` | no | `true` in dev | false in production |
-| `RATE_LIMIT_BACKEND` | no | `memory` | memory or redis |
+| `RATE_LIMIT_BACKEND` | no | `postgres` | `postgres` (shared, survives restarts) or `memory` (tests/single process); `redis` is rejected until implemented |
 | `MAX_REQUEST_BODY_BYTES` | no | `1048576` | 1 MiB request body cap |
 | `LOG_LEVEL` | no | `info` | |
 | `SENTRY_DSN` | no | — | reserved; error reporting is not wired yet |
@@ -941,19 +941,25 @@ Environment variables (validated at startup; fail fast on missing required value
 - TLS terminates at the reverse proxy; cookies are `Secure` in production.
 - CORS: no wildcard. If direct cross-origin access is enabled, allow only
   `FRONTEND_ORIGIN` with credentials.
-- Headers: `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`,
-  `X-Frame-Options: DENY`; HSTS in production.
+- Headers: every response, including errors, carries `X-Content-Type-Options: nosniff`,
+  `Referrer-Policy: no-referrer`, and `X-Frame-Options: DENY`; HSTS is added in
+  production.
 - Body limit 1 MiB; prompt limit 4000 characters.
 - Login rate limit: 5 attempts per 15 minutes per IP + email. Signup: 3 per hour per IP.
   Chat: 30 messages per minute per user. Generations: 10 per minute per user.
-  Limits are enforced in-process on a single instance; `RATE_LIMIT_BACKEND=redis` must
-  be implemented before running more than one.
+  Limits use fixed windows persisted in PostgreSQL by default, so they survive a restart
+  and are shared across processes. `RATE_LIMIT_BACKEND=memory` is for tests or a
+  single process. A Redis backend remains the path for high-write multi-instance
+  deployments.
 - Authorization: every query is scoped by user id. Public routes are explicitly listed;
   a test asserts that the route table matches the app and that every protected route
   depends on `get_current_auth`, so a route cannot ship without an auth decision.
 - Provider URLs come from configuration only (no SSRF surface).
-- Secrets are redacted from logs and error responses. Authorization headers are never
-  logged.
+- Secrets are redacted from logs and error responses. Authorization headers and known
+  secret values (the provider key and app secret) are masked even inside exception text.
+  Provider response bodies are never echoed to a client or a log.
+- Dependencies are audited with `pip-audit` in CI; an unaddressed high-severity finding
+  blocks a merge.
 - Audit events (login, logout, plan change, demo reset) are logged without payloads.
 - Data deletion: demo reset covers user data. Account deletion is post-v1 but the schema
   supports soft-disable now.

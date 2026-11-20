@@ -19,9 +19,10 @@ from app.api.generations import router as generations_router
 from app.api.health import router as health_router
 from app.api.problems import register_exception_handlers
 from app.api.request_context import RequestContextMiddleware
+from app.api.security_headers import SecurityHeadersMiddleware
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging
-from app.core.rate_limit import MemoryRateLimiter
+from app.core.rate_limit import build_rate_limiter
 from app.db.session import create_engine, create_session_factory
 from app.domain import messages as message_service
 from app.providers.base import ChatProvider
@@ -48,6 +49,9 @@ def create_app(
         engine = create_engine(resolved.database_url)
         app.state.engine = engine
         app.state.session_factory = create_session_factory(engine)
+        limiter = build_rate_limiter(resolved, app.state.session_factory)
+        await limiter.start()
+        app.state.rate_limiter = limiter
         provider = chat_provider if chat_provider is not None else build_chat_provider(resolved)
         app.state.chat_provider = provider
         app.state.storage = LocalStorage(resolved.storage_dir)
@@ -71,12 +75,12 @@ def create_app(
         lifespan=lifespan,
     )
     app.state.settings = resolved
-    app.state.rate_limiter = MemoryRateLimiter()
     # Added outermost first: the last `add_middleware` call runs first, so the
-    # request id and access log wrap the origin and body guards.
+    # security headers, request id, and access log wrap the origin and body guards.
     app.add_middleware(RequestBodyLimitMiddleware, max_bytes=resolved.max_request_body_bytes)
     app.add_middleware(OriginCheckMiddleware, allowed_origins=[resolved.frontend_origin])
     app.add_middleware(RequestContextMiddleware)
+    app.add_middleware(SecurityHeadersMiddleware, hsts=resolved.is_production)
     register_exception_handlers(app)
     app.include_router(health_router)
     app.include_router(auth_router)

@@ -141,6 +141,9 @@ def make_settings(**overrides: Any) -> Settings:
         "app_secret": TEST_SECRET,
         "database_url": TEST_DATABASE_URL,
         "log_level": "info",
+        # Keep the suite in-process by default; the database-backed limiter has
+        # its own integration test and shares state across app instances.
+        "rate_limit_backend": "memory",
     }
     values.update(overrides)
     return Settings(_env_file=None, **values)

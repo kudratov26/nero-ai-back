@@ -1,4 +1,8 @@
-"""Fixed-window rate limiter behaviour."""
+"""In-process fixed-window rate limiter behaviour.
+
+The database-backed limiter has its own integration suite, because it needs a
+real PostgreSQL connection and shares state between app instances.
+"""
 
 from __future__ import annotations
 
@@ -16,73 +20,81 @@ class FakeClock:
         self.now += seconds
 
 
-def test_allows_attempts_up_to_the_limit() -> None:
+async def test_allows_attempts_up_to_the_limit() -> None:
     limiter = MemoryRateLimiter(clock=FakeClock())
 
-    results = [limiter.hit("ip", limit=3, window_seconds=60) for _ in range(3)]
+    results = [await limiter.hit("ip", limit=3, window_seconds=60) for _ in range(3)]
 
     assert results == [None, None, None]
 
 
-def test_blocks_the_attempt_after_the_limit() -> None:
+async def test_blocks_the_attempt_after_the_limit() -> None:
     limiter = MemoryRateLimiter(clock=FakeClock())
     for _ in range(3):
-        limiter.hit("ip", limit=3, window_seconds=60)
+        await limiter.hit("ip", limit=3, window_seconds=60)
 
-    retry_after = limiter.hit("ip", limit=3, window_seconds=60)
+    retry_after = await limiter.hit("ip", limit=3, window_seconds=60)
 
     assert retry_after == 60
 
 
-def test_retry_after_counts_down_within_the_window() -> None:
+async def test_retry_after_counts_down_within_the_window() -> None:
     clock = FakeClock()
     limiter = MemoryRateLimiter(clock=clock)
     for _ in range(2):
-        limiter.hit("ip", limit=2, window_seconds=120)
+        await limiter.hit("ip", limit=2, window_seconds=120)
 
     clock.advance(30)
 
-    assert limiter.hit("ip", limit=2, window_seconds=120) == 90
+    assert await limiter.hit("ip", limit=2, window_seconds=120) == 90
 
 
-def test_window_resets_after_it_expires() -> None:
+async def test_window_resets_after_it_expires() -> None:
     clock = FakeClock()
     limiter = MemoryRateLimiter(clock=clock)
     for _ in range(2):
-        limiter.hit("ip", limit=2, window_seconds=60)
-    assert limiter.hit("ip", limit=2, window_seconds=60) == 60
+        await limiter.hit("ip", limit=2, window_seconds=60)
+    assert await limiter.hit("ip", limit=2, window_seconds=60) == 60
 
     clock.advance(60)
 
-    assert limiter.hit("ip", limit=2, window_seconds=60) is None
+    assert await limiter.hit("ip", limit=2, window_seconds=60) is None
 
 
-def test_keys_are_independent() -> None:
+async def test_keys_are_independent() -> None:
     limiter = MemoryRateLimiter(clock=FakeClock())
     for _ in range(2):
-        limiter.hit("first", limit=2, window_seconds=60)
+        await limiter.hit("first", limit=2, window_seconds=60)
 
-    assert limiter.hit("first", limit=2, window_seconds=60) == 60
-    assert limiter.hit("second", limit=2, window_seconds=60) is None
+    assert await limiter.hit("first", limit=2, window_seconds=60) == 60
+    assert await limiter.hit("second", limit=2, window_seconds=60) is None
 
 
-def test_retry_after_is_never_zero() -> None:
+async def test_retry_after_is_never_zero() -> None:
     clock = FakeClock()
     limiter = MemoryRateLimiter(clock=clock)
-    limiter.hit("ip", limit=1, window_seconds=60)
+    await limiter.hit("ip", limit=1, window_seconds=60)
 
     clock.advance(59.9999)
 
-    assert limiter.hit("ip", limit=1, window_seconds=60) == 1
+    assert await limiter.hit("ip", limit=1, window_seconds=60) == 1
 
 
-def test_expired_windows_do_not_accumulate() -> None:
+async def test_expired_windows_do_not_accumulate() -> None:
     clock = FakeClock()
     limiter = MemoryRateLimiter(clock=clock)
     for index in range(_PRUNE_THRESHOLD + 10):
-        limiter.hit(f"key-{index}", limit=1, window_seconds=60)
+        await limiter.hit(f"key-{index}", limit=1, window_seconds=60)
 
     clock.advance(61)
-    limiter.hit("fresh", limit=1, window_seconds=60)
+    await limiter.hit("fresh", limit=1, window_seconds=60)
 
     assert limiter.tracked_keys == 1
+
+
+async def test_start_is_a_noop() -> None:
+    limiter = MemoryRateLimiter(clock=FakeClock())
+
+    await limiter.start()
+
+    assert limiter.tracked_keys == 0

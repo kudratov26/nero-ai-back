@@ -15,7 +15,7 @@ DEFAULT_MAX_BODY_BYTES = 1_048_576
 DEFAULT_CHAT_MODEL = "deepseek-v4.1-flash"
 
 LogLevel = Literal["debug", "info", "warning", "error", "critical"]
-RateLimitBackend = Literal["memory", "redis"]
+RateLimitBackend = Literal["memory", "postgres", "redis"]
 GenerationMode = Literal["mock", "live"]
 
 
@@ -52,7 +52,7 @@ class Settings(BaseSettings):
     session_ttl_days: int = 30
     cookie_secure: bool | None = None
 
-    rate_limit_backend: RateLimitBackend = "memory"
+    rate_limit_backend: RateLimitBackend = "postgres"
     max_request_body_bytes: int = DEFAULT_MAX_BODY_BYTES
 
     # Plan changes are simulated (no payment provider). The endpoint is disabled

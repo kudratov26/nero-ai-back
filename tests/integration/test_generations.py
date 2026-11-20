@@ -577,7 +577,7 @@ async def test_the_generation_rate_limit_is_enforced(
     limiter = generation_env.app.state.rate_limiter
     key = f"generation-create:{generation_env.user_id}"
     for _ in range(10):
-        assert limiter.hit(key, limit=10, window_seconds=60) is None
+        assert await limiter.hit(key, limit=10, window_seconds=60) is None
 
     response = await create(generation_env)
 

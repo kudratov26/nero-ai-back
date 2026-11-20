@@ -15,6 +15,7 @@ from app.db.models.message import Message
 from app.db.models.model import Model
 from app.db.models.plan import Plan
 from app.db.models.post import Post, PostLike
+from app.db.models.rate_limit import RateLimitWindow
 from app.db.models.session import UserSession
 from app.db.models.user import User
 
@@ -30,6 +31,7 @@ __all__ = [
     "Plan",
     "Post",
     "PostLike",
+    "RateLimitWindow",
     "User",
     "UserSession",
 ]

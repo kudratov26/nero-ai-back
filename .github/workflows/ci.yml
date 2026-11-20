@@ -59,6 +59,9 @@ jobs:
       - name: Type check
         run: uv run mypy app
 
+      - name: Audit dependencies
+        run: uv run --with pip-audit pip-audit
+
       - name: Check OpenAPI snapshot
         run: uv run python -m scripts.export_openapi --check
 

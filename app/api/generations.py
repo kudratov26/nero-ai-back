@@ -28,7 +28,7 @@ from app.api.schemas.generation import (
     GenerationResponse,
     GenerationStatus,
 )
-from app.core.rate_limit import MemoryRateLimiter
+from app.core.rate_limit import RateLimiter
 from app.db.models.idempotency import MAX_KEY_LENGTH
 from app.domain import generations as generation_service
 from app.domain.auth import AuthContext
@@ -126,10 +126,10 @@ async def create_generation(
     body: CreateGenerationRequest,
     context: Annotated[AuthContext, Depends(get_current_auth)],
     session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
-    limiter: Annotated[MemoryRateLimiter, Depends(get_rate_limiter)],
+    limiter: Annotated[RateLimiter, Depends(get_rate_limiter)],
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> GenerationResponse:
-    enforce_rate_limit(
+    await enforce_rate_limit(
         limiter,
         f"generation-create:{context.user.id}",
         limit=GENERATIONS_PER_MINUTE,
