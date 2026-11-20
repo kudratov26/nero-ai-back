@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.api.problems import ApiError, ErrorCode
 from app.core.config import Settings
-from app.core.rate_limit import MemoryRateLimiter
+from app.core.rate_limit import RateLimiter
 from app.domain.auth import AuthContext, authenticate
 from app.providers.base import ChatProvider
 from app.storage.local import LocalStorage
@@ -26,11 +26,11 @@ def get_session_factory(request: Request) -> async_sessionmaker[AsyncSession]:
     return cast(async_sessionmaker[AsyncSession], factory)
 
 
-def get_rate_limiter(request: Request) -> MemoryRateLimiter:
+def get_rate_limiter(request: Request) -> RateLimiter:
     limiter = getattr(request.app.state, "rate_limiter", None)
     if limiter is None:
         raise RuntimeError("the rate limiter is not initialized")
-    return cast(MemoryRateLimiter, limiter)
+    return cast(RateLimiter, limiter)
 
 
 def get_chat_provider(request: Request) -> ChatProvider | None:
@@ -47,15 +47,15 @@ def get_storage(request: Request) -> LocalStorage:
     return cast(LocalStorage, storage)
 
 
-def enforce_rate_limit(
-    limiter: MemoryRateLimiter,
+async def enforce_rate_limit(
+    limiter: RateLimiter,
     key: str,
     *,
     limit: int,
     window_seconds: int,
 ) -> None:
     """Record one attempt against a budget, raising 429 when it is exhausted."""
-    retry_after = limiter.hit(key, limit=limit, window_seconds=window_seconds)
+    retry_after = await limiter.hit(key, limit=limit, window_seconds=window_seconds)
     if retry_after is None:
         return
     raise ApiError(

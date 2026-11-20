@@ -294,7 +294,7 @@ reset, and plan change work against the backend in a staging build.
 **Gate:** staging deploy passes the golden path; backups restore; rate limits and spend
 caps are configured; no secrets in logs.
 
-- [ ] **B7.1 Security hardening**
+- [x] **B7.1 Security hardening**
   - Security headers, body limits, persistent rate limits, dependency audit.
   - Authorization test matrix review; provider key redaction audit.
   - Acceptance: checklist in the PR; no high-severity audit findings unaddressed.

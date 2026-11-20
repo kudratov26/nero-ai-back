@@ -42,6 +42,7 @@ here in the same PR.
 | **Problem details** | The RFC 9457 error shape returned as `application/problem+json`. |
 | **Cursor** | An opaque token that points at the next page of a list. Clients pass it back unchanged and never parse it. |
 | **OpenAPI snapshot** | The committed `openapi.json` rendered from the app. It is the contract the frontend generates its types from; CI fails when it is stale. |
+| **Rate limit window** | A fixed interval during which one throttle key may make a bounded number of attempts. Counter rows live in `rate_limit_windows` and are shared by every API process. |
 | **Gate** | The acceptance checklist that must pass before the next roadmap phase starts. |
 | **Hold expiry** | The deadline after which an uncommitted reservation is refunded and its work marked failed. |
 | **IDOR** | Insecure direct object reference. Prevented by scoping every query to the authenticated user. |

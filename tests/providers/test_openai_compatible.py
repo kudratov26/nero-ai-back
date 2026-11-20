@@ -12,6 +12,7 @@ import pytest
 import respx
 
 from app.api.problems import ErrorCode
+from app.core.logging import configure_logging
 from app.providers.base import (
     ChatParams,
     ChatProvider,
@@ -156,6 +157,25 @@ async def test_a_client_error_is_not_retried() -> None:
     assert caught.value.code == ErrorCode.PROVIDER_ERROR
     assert caught.value.retryable is False
     assert route.call_count == 1
+
+
+@respx.mock
+async def test_a_provider_error_body_is_never_echoed(capsys: pytest.CaptureFixture[str]) -> None:
+    """The gateway may quote the key in its error body; the adapter must not."""
+    configure_logging(make_settings(ai_api_key=API_KEY))
+    respx.post(ENDPOINT).mock(
+        return_value=httpx.Response(401, json={"error": f"invalid key {API_KEY}"})
+    )
+    provider = make_provider()
+    try:
+        with pytest.raises(ProviderError) as caught:
+            await collect(provider)
+    finally:
+        await provider.aclose()
+
+    assert API_KEY not in str(caught.value)
+    assert API_KEY not in caught.value.detail
+    assert API_KEY not in capsys.readouterr().out
 
 
 @respx.mock

@@ -163,7 +163,7 @@ gitignored, and `.env.example` contains placeholders only.
 | `SESSION_COOKIE_NAME` | `nero_session` | |
 | `SESSION_TTL_DAYS` | `30` | Sessions are revocable server-side. |
 | `COOKIE_SECURE` | derived | True in production; `false` is rejected when `APP_ENV=production`. |
-| `RATE_LIMIT_BACKEND` | `memory` | `redis` is not implemented and fails at startup, by design. |
+| `RATE_LIMIT_BACKEND` | `postgres` | `postgres` shares windows across processes and survives restarts; `memory` is for tests or one process. `redis` is not implemented and fails at startup. |
 | `MAX_REQUEST_BODY_BYTES` | `1048576` | 1 MiB cap; larger bodies are `413 payload_too_large`. |
 | `AI_BASE_URL` | unset | Coarena gateway base URL. Blank disables the chat model. |
 | `AI_API_KEY` | unset | Server-only; never log, commit, or return it. |
@@ -253,6 +253,7 @@ uv run ruff format --check .
 uv run ruff check .
 uv run mypy app
 uv run python -m scripts.export_openapi --check
+uv run --with pip-audit pip-audit
 uv run pytest --cov=app --cov-report=term-missing --cov-fail-under=75
 docker build -t nero-ai-back:dev .
 ```
@@ -273,7 +274,7 @@ uv run python -m app.cli provider-check  # one round trip; never prints the key,
 | --- | --- | --- |
 | `403 origin_not_allowed` on a write | Missing or mismatched `Origin` header | Send the frontend origin (default `http://localhost:3000`) or call through the Next proxy. |
 | `/health/ready` returns `503` | Database down or migrations pending | `docker compose up -d --wait db`, then `uv run alembic upgrade head`. |
-| Startup rejects settings | `APP_ENV=production` with the placeholder secret or `COOKIE_SECURE=false`, or `RATE_LIMIT_BACKEND=redis` | Set real production values; Redis is not implemented, keep `memory` for one instance. |
+| Startup rejects settings | `APP_ENV=production` with the placeholder secret or `COOKIE_SECURE=false`, or `RATE_LIMIT_BACKEND=redis` | Set real production values; Redis is not implemented, keep `postgres` (or `memory` for one process). |
 | `/v1/models` has no chat model | `AI_BASE_URL` or `AI_API_KEY` unset | Set both, then re-run `uv run python -m app.cli seed`. |
 | `/v1/models` has no Image/Video models | `GENERATION_MODE` is not `mock` | Set `GENERATION_MODE=mock` and reseed. |
 | A Generation stays `queued` | Worker is not running or points at another database | Start `uv run python -m app.worker` with the same `.env`. |
@@ -312,5 +313,11 @@ scripts/        seed and maintenance commands
   present mock output as a real model run.
 - Use the same-origin frontend proxy. If direct cross-origin access is ever added, allow
   only the exact `FRONTEND_ORIGIN`; wildcard origins with credentials are never allowed.
-- `RATE_LIMIT_BACKEND=memory` is single-instance only. Add the Redis backend before
-  scaling out.
+- `RATE_LIMIT_BACKEND=postgres` is the default: windows are shared by every process and
+  survive a restart. `memory` is single-process only; add the Redis backend before
+  high-write multi-instance scaling.
+- Every response carries `X-Content-Type-Options: nosniff`, `Referrer-Policy:
+  no-referrer`, and `X-Frame-Options: DENY`; HSTS is production-only. Errors and stream
+  responses are covered too.
+- Dependencies are scanned with `uv run --with pip-audit pip-audit` in CI. Address a
+  high-severity finding before merge; do not silence it.

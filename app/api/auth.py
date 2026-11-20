@@ -30,7 +30,7 @@ from app.api.schemas.auth import (
     UserResponse,
 )
 from app.core.config import Settings
-from app.core.rate_limit import MemoryRateLimiter
+from app.core.rate_limit import RateLimiter
 from app.db.models import UserSession
 from app.domain import auth as auth_service
 from app.domain.auth import AuthContext, IssuedSession, normalize_email
@@ -117,9 +117,9 @@ async def signup(
     response: Response,
     settings: Annotated[Settings, Depends(get_app_settings)],
     session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
-    limiter: Annotated[MemoryRateLimiter, Depends(get_rate_limiter)],
+    limiter: Annotated[RateLimiter, Depends(get_rate_limiter)],
 ) -> MeResponse:
-    enforce_rate_limit(
+    await enforce_rate_limit(
         limiter,
         _rate_limit_key(request, scope="signup"),
         limit=SIGNUP_ATTEMPT_LIMIT,
@@ -151,9 +151,9 @@ async def login(
     response: Response,
     settings: Annotated[Settings, Depends(get_app_settings)],
     session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
-    limiter: Annotated[MemoryRateLimiter, Depends(get_rate_limiter)],
+    limiter: Annotated[RateLimiter, Depends(get_rate_limiter)],
 ) -> MeResponse:
-    enforce_rate_limit(
+    await enforce_rate_limit(
         limiter,
         _rate_limit_key(request, scope="login", email=str(body.email)),
         limit=LOGIN_ATTEMPT_LIMIT,

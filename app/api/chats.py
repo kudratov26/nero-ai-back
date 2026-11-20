@@ -45,7 +45,7 @@ from app.api.schemas.message import (
     StartedPayload,
     UsagePayload,
 )
-from app.core.rate_limit import MemoryRateLimiter
+from app.core.rate_limit import RateLimiter
 from app.db.models import Chat, Message
 from app.domain import chat as chat_service
 from app.domain import messages as message_service
@@ -390,10 +390,10 @@ async def send_message(
     body: SendMessageRequest,
     context: Annotated[AuthContext, Depends(get_current_auth)],
     session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
-    limiter: Annotated[MemoryRateLimiter, Depends(get_rate_limiter)],
+    limiter: Annotated[RateLimiter, Depends(get_rate_limiter)],
     provider: Annotated[ChatProvider | None, Depends(get_chat_provider)],
 ) -> StreamingResponse:
-    enforce_rate_limit(
+    await enforce_rate_limit(
         limiter,
         f"chat-message:{context.user.id}",
         limit=CHAT_MESSAGES_PER_MINUTE,

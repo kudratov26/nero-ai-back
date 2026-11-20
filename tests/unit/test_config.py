@@ -75,8 +75,14 @@ def test_body_limit_must_be_positive() -> None:
         make_settings(max_request_body_bytes=0)
 
 
-def test_memory_rate_limit_backend_is_the_default() -> None:
-    assert make_settings().rate_limit_backend == "memory"
+def test_postgres_rate_limit_backend_is_the_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("RATE_LIMIT_BACKEND", raising=False)
+    settings = Settings(_env_file=None, database_url="postgresql+asyncpg://localhost/nero")
+    assert settings.rate_limit_backend == "postgres"
+
+
+def test_memory_rate_limit_backend_is_available() -> None:
+    assert make_settings(rate_limit_backend="memory").rate_limit_backend == "memory"
 
 
 def test_redis_rate_limit_backend_is_not_supported_yet() -> None:

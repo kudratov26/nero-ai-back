@@ -384,7 +384,7 @@ async def test_the_chat_rate_limit_is_enforced(chat_env: ChatEnv) -> None:
     limiter = chat_env.app.state.rate_limiter
     key = f"chat-message:{chat_env.user_id}"
     for _ in range(30):
-        assert limiter.hit(key, limit=30, window_seconds=60) is None
+        assert await limiter.hit(key, limit=30, window_seconds=60) is None
 
     response = await send(chat_env)
 
@@ -639,6 +639,43 @@ async def test_an_unexpected_provider_error_refunds_and_persists(
     assert [entry.kind for entry in entries] == ["reserve", "refund"]
     refreshed = await account(chat_env)
     assert (refreshed.balance, refreshed.held) == (50, 0)
+
+
+class _LeakyBrokenProvider:
+    """An adapter bug whose exception message quotes the provider key."""
+
+    def __init__(self, secret: str) -> None:
+        self._secret = secret
+
+    async def aclose(self) -> None:
+        pass
+
+    async def stream_chat(
+        self,
+        *,
+        messages: Sequence[ProviderMessage],
+        model: ProviderModel,
+        params: ChatParams,
+    ) -> AsyncIterator[ChatDelta]:
+        raise RuntimeError(f"adapter rejected {self._secret}")
+        yield ChatDelta()  # pragma: no cover - makes this an async generator
+
+
+async def test_a_provider_key_in_an_adapter_error_reaches_neither_client_nor_logs(
+    chat_env: ChatEnv, capsys: pytest.CaptureFixture[str]
+) -> None:
+    secret = chat_env.settings.ai_api_key
+    assert secret is not None
+    chat_env.app.state.chat_provider = _LeakyBrokenProvider(secret)
+
+    response = await send(chat_env, "Leak check")
+
+    assert response.status_code == 200, response.text
+    assert secret not in response.text
+    failed = parse_sse(response.text)[-1][1]
+    assert failed is not None
+    assert failed["detail"] == message_service.STREAM_FAILED_DETAIL
+    assert secret not in capsys.readouterr().out
 
 
 async def _assistant_row(env: ChatEnv, message_id: UUID) -> Message:
