@@ -21,13 +21,16 @@ import sys
 import time
 from collections.abc import Sequence
 
+import httpx
 import structlog
 
+from app.core.alerts import AlertSink, LogAlertSink, WebhookAlertSink, route_alerts
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging
 from app.db.explore_seed import upsert_explore
 from app.db.seed import upsert_models, upsert_plans
 from app.db.session import create_engine, create_session_factory, session_scope
+from app.domain import ops
 from app.providers.base import (
     ChatParams,
     ChatProvider,
@@ -41,7 +44,7 @@ from app.storage.local import LocalStorage
 
 log = structlog.get_logger(__name__)
 
-USAGE = "usage: python -m app.cli seed | provider-check"
+USAGE = "usage: python -m app.cli seed | provider-check | ops-check"
 
 #: A one-token probe. The prompt content is never printed.
 PROVIDER_CHECK_PROMPT = "Reply with a single word."
@@ -128,6 +131,42 @@ async def provider_check() -> int:
         await provider.aclose()
 
 
+async def ops_check(settings: Settings | None = None) -> int:
+    """Evaluate operational alerts and deliver them to every configured sink.
+
+    Exit codes: 0 when no alert fired, 1 when at least one did, 2 when the check
+    itself could not run. A cron or systemd timer treats 1 and 2 as actionable.
+    """
+    resolved = settings or get_settings()
+    engine = create_engine(resolved.database_url)
+    client: httpx.AsyncClient | None = None
+    try:
+        session_factory = create_session_factory(engine)
+        try:
+            alerts = await ops.collect_alerts(engine, session_factory, resolved)
+        except Exception as exc:
+            log.exception("ops.check_failed")
+            print(f"ops-check: failed error={type(exc).__name__}", file=sys.stderr)
+            return 2
+
+        sinks: list[AlertSink] = [LogAlertSink()]
+        if resolved.ops_alert_webhook_url:
+            client = httpx.AsyncClient()
+            sinks.append(WebhookAlertSink(client, resolved.ops_alert_webhook_url))
+        await route_alerts(alerts, sinks)
+    finally:
+        if client is not None:
+            await client.aclose()
+        await engine.dispose()
+
+    if not alerts:
+        print("ops-check: ok")
+        return 0
+    for alert in alerts:
+        print(f"ops-check: {alert.severity} code={alert.code.value} {alert.summary}")
+    return 1
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run a command. Returns the process exit code."""
     args = list(sys.argv[1:] if argv is None else argv)
@@ -137,6 +176,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if args == ["provider-check"]:
         return asyncio.run(provider_check())
+    if args == ["ops-check"]:
+        return asyncio.run(ops_check())
     print(USAGE, file=sys.stderr)
     return 2
 

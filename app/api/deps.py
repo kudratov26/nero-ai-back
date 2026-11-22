@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated, cast
 
+import structlog
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -72,7 +73,11 @@ async def get_current_auth(
     session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
 ) -> AuthContext:
     token = request.cookies.get(settings.session_cookie_name)
-    return await authenticate(session_factory, token=token)
+    context = await authenticate(session_factory, token=token)
+    # Available to every log emitted after the dependency, including the request
+    # completion event; cleared by the request middleware.
+    structlog.contextvars.bind_contextvars(userId=str(context.user.id))
+    return context
 
 
 async def get_optional_auth(
@@ -90,8 +95,10 @@ async def get_optional_auth(
     if not token:
         return None
     try:
-        return await authenticate(session_factory, token=token)
+        context = await authenticate(session_factory, token=token)
     except ApiError as exc:
         if exc.code is ErrorCode.UNAUTHORIZED:
             return None
         raise
+    structlog.contextvars.bind_contextvars(userId=str(context.user.id))
+    return context

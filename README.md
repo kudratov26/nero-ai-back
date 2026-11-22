@@ -8,7 +8,8 @@ The browser never receives a provider key.
 Generations with a worker queue, Explore, asset delivery, and demo reset run against
 PostgreSQL; the Next.js app consumes this service in API mode; the committed
 `openapi.json` is the contract both sides generate from. Phase 7 (hardening and
-deployment) is next.
+deployment) is in progress: security hardening and operations are done, production
+deployment is next.
 
 Image and Video are deterministic mock providers until a real provider key and adapter
 exist. They are labelled `Demo`, and the catalog never advertises a model whose provider
@@ -20,6 +21,7 @@ is not configured. Chat runs on DeepSeek V4.1 Flash through the Coarena gateway 
 - [`docs/SPEC.md`](docs/SPEC.md): product and technical specification, API contract,
   data model, security, deployment.
 - [`docs/ROADMAP.md`](docs/ROADMAP.md): phased tickets and gates.
+- [`docs/RUNBOOK.md`](docs/RUNBOOK.md): probes, metrics, alerts, backup and restore.
 - [`AGENTS.md`](AGENTS.md): rules for the AI agent building this repository.
 - [`GLOSSARY.md`](GLOSSARY.md): domain vocabulary.
 - [`docs/adr/`](docs/adr/): decisions.
@@ -73,6 +75,29 @@ curl -sS http://localhost:8000/health/ready   # {"status":"ready"} once migrated
 It never echoes driver messages or connection strings. Interactive API docs are at
 `http://localhost:8000/docs` (disabled in production); the raw schema is
 `/openapi.json`.
+
+### Operations
+
+`GET /metrics` exposes Prometheus counters and histograms for HTTP requests, provider
+attempts, and worker outcomes. It is public for a same-network collector; put it behind
+the reverse proxy (or restrict the path) when the API is internet-facing.
+
+```bash
+curl -sS http://localhost:8000/metrics | head
+```
+
+`ops-check` evaluates readiness, queue backlog, provider error rate, and the Credit
+ledger/account invariant. It exits `0` when healthy, `1` when an alert fired, and `2`
+when the check itself could not run. Alerts go to structured logs and, when
+`OPS_ALERT_WEBHOOK_URL` is set, to that webhook.
+
+```bash
+uv run python -m app.cli ops-check
+```
+
+Run it from cron or a systemd timer, for example every five minutes. The full alert
+table, metrics contract, backup commands, and the restore drill are in
+[`docs/RUNBOOK.md`](docs/RUNBOOK.md).
 
 Which models appear depends on configuration:
 
@@ -165,6 +190,11 @@ gitignored, and `.env.example` contains placeholders only.
 | `COOKIE_SECURE` | derived | True in production; `false` is rejected when `APP_ENV=production`. |
 | `RATE_LIMIT_BACKEND` | `postgres` | `postgres` shares windows across processes and survives restarts; `memory` is for tests or one process. `redis` is not implemented and fails at startup. |
 | `MAX_REQUEST_BODY_BYTES` | `1048576` | 1 MiB cap; larger bodies are `413 payload_too_large`. |
+| `OPS_QUEUE_BACKLOG_THRESHOLD` | `10` | Queued Generations older than the age threshold that trigger a backlog alert. |
+| `OPS_QUEUE_BACKLOG_AGE_SECONDS` | `300` | Backlog age threshold. |
+| `OPS_PROVIDER_ERROR_THRESHOLD` | `10` | Provider failures inside the window that trigger an alert. |
+| `OPS_PROVIDER_ERROR_WINDOW_SECONDS` | `900` | Provider failure lookback. |
+| `OPS_ALERT_WEBHOOK_URL` | unset | http(s) alert delivery; unset means structured logs only. |
 | `AI_BASE_URL` | unset | Coarena gateway base URL. Blank disables the chat model. |
 | `AI_API_KEY` | unset | Server-only; never log, commit, or return it. |
 | `AI_CHAT_MODEL` | `deepseek-v4.1-flash` | Must exist on the gateway. |
@@ -282,6 +312,8 @@ uv run python -m app.cli provider-check  # one round trip; never prints the key,
 | An asset URL returns `404` | API and worker use different `STORAGE_DIR`, or the file was removed | Point both processes at the same directory; re-run `seed` for fixture media. |
 | `401 unauthorized` from the frontend proxy | No valid session cookie (expired or signed out) | Sign in again; confirm `API_URL` and restart the dev server after env changes. |
 | `429 rate_limited` while testing | Signup is 3/hour per IP; login 5/15 min; chat 30/min; generations 10/min | Wait for `Retry-After` or reuse an existing session. |
+| `ops-check` exits `1` | An alert fired: readiness, backlog, provider errors, or a Credit invariant | Read the `code=` line and follow the matching row in `docs/RUNBOOK.md`. |
+| `ops-check` exits `2` | The check could not query the database | Confirm `DATABASE_URL` and that migrations are at head. |
 | `409 duplicate_message` on a retried chat turn | The same `clientId` was already used in that chat | Refetch history instead of retrying the same id. |
 | Tests cannot connect | PostgreSQL not running or `TEST_DATABASE_URL` wrong | Start the database; the suite creates and migrates its own test database. |
 
@@ -298,7 +330,7 @@ app/
   workers/      generation worker
 alembic/        migrations
 tests/          unit, integration, providers, contract
-docs/           spec, roadmap, ADRs, agent docs
+docs/           spec, roadmap, ADRs, runbook, agent docs
 scripts/        seed and maintenance commands
 ```
 

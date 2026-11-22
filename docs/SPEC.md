@@ -931,6 +931,11 @@ Environment variables (validated at startup; fail fast on missing required value
 | `ALLOW_SIMULATED_PLAN_CHANGES` | no | `true` in dev | false in production |
 | `RATE_LIMIT_BACKEND` | no | `postgres` | `postgres` (shared, survives restarts) or `memory` (tests/single process); `redis` is rejected until implemented |
 | `MAX_REQUEST_BODY_BYTES` | no | `1048576` | 1 MiB request body cap |
+| `OPS_QUEUE_BACKLOG_THRESHOLD` | no | `10` | alert when at least this many jobs are queued past the age threshold |
+| `OPS_QUEUE_BACKLOG_AGE_SECONDS` | no | `300` | only queued jobs older than this count toward backlog |
+| `OPS_PROVIDER_ERROR_THRESHOLD` | no | `10` | provider failures inside the window that trigger an alert |
+| `OPS_PROVIDER_ERROR_WINDOW_SECONDS` | no | `900` | lookback window for failed chat and Generation work |
+| `OPS_ALERT_WEBHOOK_URL` | no | — | http(s) endpoint for alert delivery; unset means structured logs only |
 | `LOG_LEVEL` | no | `info` | |
 | `SENTRY_DSN` | no | — | reserved; error reporting is not wired yet |
 
@@ -968,15 +973,28 @@ Environment variables (validated at startup; fail fast on missing required value
 ## 16. Observability
 
 - Structured JSON logs with `requestId`, `userId`, `method`, `path`, `status`,
-  `durationMs`, `modelId`, `provider`, `outcome`.
-- Never log request bodies or model content.
+  `durationMs`, `outcome`. `userId` is bound after authentication and is absent on
+  anonymous requests. Worker events carry `generation_id`, `attempt`, and counts.
+- Never log request bodies, prompts, message content, model output, cookies, or tokens.
 - `/health/live` returns 200 if the process is alive.
 - `/health/ready` checks database connectivity and migrations; it does not call the
   provider.
-- Metrics (post-v1): request latency, stream duration, provider errors, Credit spend,
-  queue depth, job failure rate.
-- Alerts (post-v1): readiness failures, provider error rate, job backlog, negative-balance
-  invariant violation.
+- `GET /metrics` returns the Prometheus text exposition format. It is public so a
+  same-network collector can scrape it; restrict the path at the reverse proxy when the
+  API is internet-facing. It exposes only fixed names and labels:
+  `http_requests_total{method,outcome}`,
+  `http_request_duration_seconds{method}`,
+  `provider_requests_total{provider,outcome}`,
+  `provider_request_duration_seconds{provider,outcome}`,
+  `generation_jobs_total{modality,outcome}`, and
+  `generation_job_duration_seconds{modality,outcome}`. No user id, prompt, token, or
+  provider body is a label or a value.
+- `python -m app.cli ops-check` evaluates readiness, queue backlog, provider error rate,
+  and Credit ledger/account invariants, then routes alerts to structured logs and the
+  optional webhook. Exit codes: `0` healthy, `1` alert fired, `2` the check itself failed.
+- Alerts: `readiness_failed` (critical), `queue_backlog` (warning),
+  `provider_error_rate` (warning), and `credit_invariant_violation` (critical). Delivery
+  and thresholds are in `docs/RUNBOOK.md`.
 
 ## 17. Frontend integration
 
@@ -1026,6 +1044,9 @@ clean migrated database and roll back per test.
 - One API instance and one worker for v1. SQLite is not supported.
 - Production: managed PostgreSQL, S3-compatible storage, HTTPS, provider spend cap,
   backups daily with 7-day retention, and log retention.
+- Back up PostgreSQL with `pg_dump -Fc` and the asset directory as one set, because a
+  Generation row and its asset bytes must be restored together. The commands, restore
+  drill, and dated drill record live in `docs/RUNBOOK.md`.
 - Migrations are backward-compatible for one release (expand/contract) before scaling to
   multiple instances.
 

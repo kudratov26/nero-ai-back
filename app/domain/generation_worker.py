@@ -23,6 +23,7 @@ Logs carry ids, counts, and durations. They never carry the prompt or the output
 
 from __future__ import annotations
 
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import timedelta
@@ -35,6 +36,7 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.api.problems import ErrorCode
+from app.core.metrics import METRICS
 from app.db.models import Generation
 from app.db.models.common import utcnow
 from app.db.session import session_scope
@@ -387,9 +389,20 @@ async def run_job(
     """Render one claimed job and settle it. Returns whether it succeeded.
 
     Progress is throttled to whole-percent changes, so a provider that reports
-    often cannot flood the database with updates.
+    often cannot flood the database with updates. Each outcome is counted once,
+    by modality and a fixed outcome label; no prompt or output reaches a metric.
     """
     last_reported = -1
+    started = time.perf_counter()
+
+    def record(outcome: str) -> None:
+        METRICS.increment("generation_jobs_total", modality=job.modality, outcome=outcome)
+        METRICS.observe(
+            "generation_job_duration_seconds",
+            time.perf_counter() - started,
+            modality=job.modality,
+            outcome=outcome,
+        )
 
     async def on_progress(percent: int) -> None:
         nonlocal last_reported
@@ -413,14 +426,16 @@ async def run_job(
             error_code=_error_code(exc),
             retryable=False,
         )
+        record("cancelled")
         return False
     except ProviderError as exc:
-        await _settle_failure(
+        retrying = await _settle_failure(
             session_factory,
             job=job,
             error_code=_error_code(exc),
             retryable=exc.retryable,
         )
+        record("retried" if retrying else "failed")
         return False
     except Exception:
         # An adapter bug must not strand a reservation: treat it as a final
@@ -435,14 +450,17 @@ async def run_job(
             error_code=ERROR_INTERNAL,
             retryable=False,
         )
+        record("crashed")
         return False
 
-    return await _settle_success(
+    settled = await _settle_success(
         session_factory,
         storage,
         job=job,
         outputs=outputs,
     )
+    record("succeeded" if settled else "discarded")
+    return settled
 
 
 async def process_one(

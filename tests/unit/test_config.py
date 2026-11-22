@@ -252,3 +252,48 @@ def test_hold_ttl_defaults_to_one_hour() -> None:
 def test_hold_ttl_must_be_positive(value: float) -> None:
     with pytest.raises(ValidationError):
         make_settings(hold_ttl_seconds=value)
+
+
+def test_ops_alert_defaults() -> None:
+    settings = make_settings()
+
+    assert settings.ops_queue_backlog_threshold == 10
+    assert settings.ops_queue_backlog_age_seconds == 300.0
+    assert settings.ops_provider_error_threshold == 10
+    assert settings.ops_provider_error_window_seconds == 900.0
+    assert settings.ops_alert_webhook_url is None
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["ops_queue_backlog_threshold", "ops_provider_error_threshold"],
+)
+@pytest.mark.parametrize("value", [0, -1])
+def test_ops_thresholds_must_be_at_least_one(field: str, value: int) -> None:
+    with pytest.raises(ValidationError):
+        make_settings(**{field: value})
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["ops_queue_backlog_age_seconds", "ops_provider_error_window_seconds"],
+)
+@pytest.mark.parametrize("value", [0, -0.5])
+def test_ops_windows_must_be_positive(field: str, value: float) -> None:
+    with pytest.raises(ValidationError):
+        make_settings(**{field: value})
+
+
+def test_ops_webhook_accepts_http_urls() -> None:
+    settings = make_settings(ops_alert_webhook_url="https://hooks.example.test/alerts")
+
+    assert settings.ops_alert_webhook_url == "https://hooks.example.test/alerts"
+
+
+def test_ops_webhook_rejects_a_non_http_scheme() -> None:
+    with pytest.raises(ValidationError):
+        make_settings(ops_alert_webhook_url="ftp://hooks.example.test/alerts")
+
+
+def test_a_blank_ops_webhook_is_unset() -> None:
+    assert make_settings(ops_alert_webhook_url="   ").ops_alert_webhook_url is None

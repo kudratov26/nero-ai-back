@@ -24,6 +24,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.core.config import Settings
+from app.core.metrics import METRICS
 from app.db.models import Asset, CreditAccount, CreditLedgerEntry, Generation, User
 from app.db.models.common import utcnow
 from app.db.seed import IMAGE_CREDITS, IMAGE_MODEL_ID, VIDEO_MODEL_ID, upsert_models
@@ -51,6 +52,12 @@ class WorkerEnv:
     storage: LocalStorage
     settings: Settings
     user_id: UUID
+
+
+@pytest.fixture(autouse=True)
+def clean_metrics() -> None:
+    """The registry is process-wide; keep outcome assertions exact."""
+    METRICS.reset()
 
 
 @pytest.fixture
@@ -217,6 +224,7 @@ async def test_a_queued_image_generation_completes_with_assets(
     assert row.locked_at is None
     assert row.finished_at is not None
     assert row.started_at is not None
+    assert 'generation_jobs_total{modality="image",outcome="succeeded"} 1' in METRICS.render()
 
     assets = await assets_for(worker_env, generation_id)
     assert len(assets) == 2
@@ -426,6 +434,7 @@ async def test_a_retryable_failure_requeues_without_refunding(
     assert row.locked_by is None
     assert await ledger_kinds(worker_env, generation_id) == ["reserve"]
     assert await held(worker_env) == IMAGE_CREDITS
+    assert 'generation_jobs_total{modality="image",outcome="retried"} 1' in METRICS.render()
 
 
 async def test_the_last_attempt_fails_and_refunds_once(worker_env: WorkerEnv) -> None:
@@ -446,6 +455,7 @@ async def test_the_last_attempt_fails_and_refunds_once(worker_env: WorkerEnv) ->
     assert row.finished_at is not None
     assert await ledger_kinds(worker_env, generation_id) == ["reserve", "refund"]
     assert await held(worker_env) == 0
+    assert 'generation_jobs_total{modality="image",outcome="failed"} 1' in METRICS.render()
 
 
 async def test_a_non_retryable_failure_fails_immediately(worker_env: WorkerEnv) -> None:
