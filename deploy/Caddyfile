@@ -1,0 +1,11 @@
+# The only public entry point. Caddy obtains and renews the certificate for
+# NERO_DOMAIN automatically. For a local staging run use `NERO_DOMAIN=localhost`
+# and expose 8443; Caddy uses its local CA, which the smoke script accepts with
+# `--insecure` (local only).
+{$NERO_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy api:8000
+	header {
+		-Server
+	}
+}

@@ -3,6 +3,8 @@
 .venv
 .env
 .env.*
+deploy/.env
+deploy/production.env
 storage
 tests
 docs
