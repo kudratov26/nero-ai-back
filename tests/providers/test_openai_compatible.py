@@ -13,6 +13,7 @@ import respx
 
 from app.api.problems import ErrorCode
 from app.core.logging import configure_logging
+from app.core.metrics import Metrics
 from app.providers.base import (
     ChatParams,
     ChatProvider,
@@ -189,6 +190,56 @@ async def test_retries_before_the_first_token_then_succeeds() -> None:
 
     assert "".join(delta.text for delta in deltas) == "Shoot the"
     assert route.call_count == 2
+
+
+@respx.mock
+async def test_a_successful_stream_records_provider_metrics() -> None:
+    respx.post(ENDPOINT).mock(return_value=sse_response())
+    metrics = Metrics()
+    provider = make_provider(metrics=metrics)
+    try:
+        await collect(provider)
+    finally:
+        await provider.aclose()
+
+    rendered = metrics.render()
+    assert 'provider_requests_total{outcome="ok",provider="openai-compatible"} 1' in rendered
+    assert (
+        "provider_request_duration_seconds_count"
+        '{outcome="ok",provider="openai-compatible"} 1' in rendered
+    )
+
+
+@respx.mock
+async def test_each_retry_attempt_is_counted_by_outcome() -> None:
+    respx.post(ENDPOINT).mock(side_effect=[httpx.Response(503), sse_response()])
+    metrics = Metrics()
+    provider = make_provider(metrics=metrics, max_retries=1)
+    try:
+        await collect(provider)
+    finally:
+        await provider.aclose()
+
+    rendered = metrics.render()
+    assert (
+        'provider_requests_total{outcome="provider_error",provider="openai-compatible"} 1'
+        in rendered
+    )
+    assert 'provider_requests_total{outcome="ok",provider="openai-compatible"} 1' in rendered
+
+
+@respx.mock
+async def test_a_rate_limit_is_counted_as_rate_limited() -> None:
+    respx.post(ENDPOINT).mock(return_value=httpx.Response(429))
+    metrics = Metrics()
+    provider = make_provider(metrics=metrics)
+    try:
+        with pytest.raises(ProviderRateLimitError):
+            await collect(provider)
+    finally:
+        await provider.aclose()
+
+    assert 'outcome="rate_limited"' in metrics.render()
 
 
 @respx.mock

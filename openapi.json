@@ -1491,6 +1491,28 @@
         ]
       }
     },
+    "/metrics": {
+      "get": {
+        "description": "Returns process metrics in the Prometheus text exposition format. Restrict this path at the reverse proxy if the API is public.",
+        "operationId": "metrics_metrics_get",
+        "responses": {
+          "200": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Scrape metrics",
+        "tags": [
+          "operations"
+        ]
+      }
+    },
     "/v1/account/plan": {
       "post": {
         "description": "Simulated plan change: refills the account to the new allowance and starts a new period. Disabled unless `ALLOW_SIMULATED_PLAN_CHANGES` is enabled; rejected with 409 while Credits are held.",

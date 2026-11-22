@@ -92,7 +92,7 @@ def test_get_engine_requires_initialized_app() -> None:
 async def test_revision_check_is_skipped_outside_a_checkout(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:
-    monkeypatch.setattr("app.api.health._REPO_ROOT", tmp_path)
+    monkeypatch.setattr("app.core.readiness._REPO_ROOT", tmp_path)
     expected_revision.cache_clear()
     try:
         assert expected_revision() is None

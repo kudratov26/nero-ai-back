@@ -299,7 +299,7 @@ caps are configured; no secrets in logs.
   - Authorization test matrix review; provider key redaction audit.
   - Acceptance: checklist in the PR; no high-severity audit findings unaddressed.
 
-- [ ] **B7.2 Observability and operations**
+- [x] **B7.2 Observability and operations**
   - Structured logs, metrics hooks, readiness, backup/restore runbook.
   - Alerts for readiness, provider errors, queue depth, invariant violations.
   - Acceptance: restore drill documented; alert routes tested.

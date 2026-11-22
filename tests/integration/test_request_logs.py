@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from uuid import uuid4
 
 import httpx
 import pytest
 import structlog
 
 from app.core.logging import configure_logging
-from tests.support import asgi_client, build_app, make_settings
+from app.main import create_app
+from tests.support import asgi_client, build_app, make_settings, post_signup
 
 
 def request_events(captured: str) -> list[dict[str, Any]]:
@@ -76,6 +78,23 @@ async def test_error_access_log_marks_outcome(
     assert event["status"] == 500
     assert event["outcome"] == "error"
     assert event["requestId"] == "req-log-500"
+
+
+async def test_access_log_binds_the_authenticated_user_id(
+    migrated_database: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    email = f"logs-{uuid4().hex}@example.com"
+    async with asgi_client(create_app(make_settings())) as client:
+        signup = await post_signup(client, email)
+        assert signup.status_code == 201, signup.text
+        capsys.readouterr()
+        response = await client.get("/v1/auth/me")
+
+    assert response.status_code == 200
+    events = request_events(capsys.readouterr().out)
+    assert len(events) == 1
+    assert events[0]["userId"] == signup.json()["user"]["id"]
+    assert email not in json.dumps(events[0])
 
 
 async def test_client_error_access_log_marks_outcome(

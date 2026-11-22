@@ -43,6 +43,10 @@ here in the same PR.
 | **Cursor** | An opaque token that points at the next page of a list. Clients pass it back unchanged and never parse it. |
 | **OpenAPI snapshot** | The committed `openapi.json` rendered from the app. It is the contract the frontend generates its types from; CI fails when it is stale. |
 | **Rate limit window** | A fixed interval during which one throttle key may make a bounded number of attempts. Counter rows live in `rate_limit_windows` and are shared by every API process. |
+| **Metric** | A process-local counter or duration histogram rendered by `GET /metrics` in the Prometheus text format. Labels are fixed in code and never carry user data. |
+| **Alert** | A fixed condition an operator must act on: `readiness_failed`, `queue_backlog`, `provider_error_rate`, or `credit_invariant_violation`. Delivered by `ops-check` to logs and the optional webhook. |
+| **ops-check** | The read-only command (`python -m app.cli ops-check`) that evaluates readiness, backlog, provider errors, and Credit invariants, then exits `0`, `1`, or `2`. |
+| **Restore drill** | A dated rehearsal that restores a database dump and the asset directory into a scratch environment and verifies they agree. Documented in `docs/RUNBOOK.md`. |
 | **Gate** | The acceptance checklist that must pass before the next roadmap phase starts. |
 | **Hold expiry** | The deadline after which an uncommitted reservation is refunded and its work marked failed. |
 | **IDOR** | Insecure direct object reference. Prevented by scoping every query to the authenticated user. |

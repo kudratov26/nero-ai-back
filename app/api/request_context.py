@@ -20,6 +20,7 @@ from app.api.problems import (
     ErrorCode,
     problem_response,
 )
+from app.core.metrics import METRICS
 
 _REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 
@@ -107,4 +108,14 @@ class RequestContextMiddleware:
                 outcome=_outcome(status_code),
             )
         finally:
+            METRICS.increment(
+                "http_requests_total",
+                method=method,
+                outcome=_outcome(status_code),
+            )
+            METRICS.observe(
+                "http_request_duration_seconds",
+                time.perf_counter() - started,
+                method=method,
+            )
             structlog.contextvars.clear_contextvars()

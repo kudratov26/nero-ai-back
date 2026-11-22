@@ -12,12 +12,14 @@ from __future__ import annotations
 import asyncio
 import json
 import random
+import time
 from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import Any
 
 import httpx
 
 from app.core.config import Settings
+from app.core.metrics import METRICS, Metrics
 from app.providers.base import (
     ChatDelta,
     ChatParams,
@@ -39,6 +41,7 @@ WRITE_TIMEOUT_SECONDS = 30.0
 CHAT_COMPLETIONS_PATH = "/chat/completions"
 SSE_MEDIA_TYPE = "text/event-stream"
 DONE_SENTINEL = "[DONE]"
+PROVIDER_NAME = "openai-compatible"
 
 #: Retry a failed attempt at most this many times, only before the first token.
 MAX_RETRIES = 2
@@ -115,11 +118,13 @@ class OpenAIChatProvider:
         client: httpx.AsyncClient | None = None,
         max_retries: int = MAX_RETRIES,
         retry_backoff_seconds: float = RETRY_BACKOFF_SECONDS,
+        metrics: Metrics | None = None,
     ) -> None:
         self._api_key = api_key
         self._endpoint = f"{base_url.rstrip('/')}{CHAT_COMPLETIONS_PATH}"
         self._max_retries = max(0, max_retries)
         self._retry_backoff = retry_backoff_seconds
+        self._metrics = metrics or METRICS
         self._owns_client = client is None
         self._client = client or httpx.AsyncClient(
             timeout=httpx.Timeout(
@@ -134,6 +139,20 @@ class OpenAIChatProvider:
         """Close the underlying client when this adapter created it."""
         if self._owns_client:
             await self._client.aclose()
+
+    def _record_attempt(self, outcome: str, started: float) -> None:
+        """Record one provider attempt by outcome, never by prompt or body."""
+        self._metrics.increment(
+            "provider_requests_total",
+            provider=PROVIDER_NAME,
+            outcome=outcome,
+        )
+        self._metrics.observe(
+            "provider_request_duration_seconds",
+            time.perf_counter() - started,
+            provider=PROVIDER_NAME,
+            outcome=outcome,
+        )
 
     def _payload(
         self,
@@ -213,19 +232,31 @@ class OpenAIChatProvider:
         attempt = 0
         while True:
             delivered = False
+            started = time.perf_counter()
             try:
                 async for delta in self._stream_once(messages, model, params):
                     delivered = True
                     yield delta
+                self._record_attempt("ok", started)
                 return
             except ProviderError as exc:
+                self._record_attempt(exc.code.value, started)
                 if delivered or not exc.retryable or attempt >= self._max_retries:
                     raise
                 attempt += 1
                 await asyncio.sleep(self._retry_backoff * (2 ** (attempt - 1)) * random.random())
+            except Exception:
+                # A transport or adapter bug still counts as a failed attempt,
+                # but the exception type is all that is recorded; no payload.
+                self._record_attempt("error", started)
+                raise
 
 
-def build_chat_provider(settings: Settings) -> OpenAIChatProvider | None:
+def build_chat_provider(
+    settings: Settings,
+    *,
+    metrics: Metrics | None = None,
+) -> OpenAIChatProvider | None:
     """Build the chat provider from settings, or `None` when it is not configured."""
     base_url = settings.ai_base_url
     api_key = settings.ai_api_key
@@ -235,4 +266,5 @@ def build_chat_provider(settings: Settings) -> OpenAIChatProvider | None:
         base_url=base_url,
         api_key=api_key,
         read_timeout=settings.ai_request_timeout_seconds,
+        metrics=metrics,
     )

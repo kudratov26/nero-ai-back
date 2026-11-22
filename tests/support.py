@@ -53,6 +53,7 @@ class RouteCase(NamedTuple):
 PUBLIC_ROUTES: tuple[RouteCase, ...] = (
     RouteCase("GET", "/health/live", 200),
     RouteCase("GET", "/health/ready", 200),
+    RouteCase("GET", "/metrics", 200),
     RouteCase("GET", "/v1/plans", 200),
     RouteCase("GET", "/v1/models", 200),
     # The status depends on whether the catalog has been seeded, so only

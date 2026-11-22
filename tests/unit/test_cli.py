@@ -10,9 +10,11 @@ from app.cli import (
     PROVIDER_NOT_CONFIGURED,
     USAGE,
     main,
+    ops_check,
     provider_check,
     run_provider_check,
 )
+from app.core.alerts import Alert, AlertCode
 from app.providers.base import ChatUsage, ProviderTimeoutError
 from app.providers.fake import FakeChatProvider
 from tests.support import make_settings
@@ -148,3 +150,92 @@ def test_main_dispatches_provider_check(monkeypatch: pytest.MonkeyPatch) -> None
 
     assert main(["provider-check"]) == 0
     assert calls == 1
+
+
+def test_usage_mentions_ops_check() -> None:
+    assert "ops-check" in USAGE
+
+
+class _Engine:
+    """The subset of `AsyncEngine` that `ops_check` touches."""
+
+    def __init__(self) -> None:
+        self.disposed = False
+
+    async def dispose(self) -> None:
+        self.disposed = True
+
+
+def patch_ops_engine(monkeypatch: pytest.MonkeyPatch) -> _Engine:
+    engine = _Engine()
+    monkeypatch.setattr("app.cli.create_engine", lambda _url: engine)
+    monkeypatch.setattr("app.cli.create_session_factory", lambda _engine: object())
+    return engine
+
+
+async def test_ops_check_reports_ok_when_no_alert_fires(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine = patch_ops_engine(monkeypatch)
+
+    async def collect(_engine, _factory, _settings):
+        return []
+
+    monkeypatch.setattr("app.cli.ops.collect_alerts", collect)
+
+    exit_code = await ops_check(make_settings())
+
+    assert exit_code == 0
+    assert capsys.readouterr().out.strip() == "ops-check: ok"
+    assert engine.disposed is True
+
+
+async def test_ops_check_routes_every_alert_and_fails(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    patch_ops_engine(monkeypatch)
+    alert = Alert(
+        code=AlertCode.QUEUE_BACKLOG,
+        severity="warning",
+        summary="12 Generation(s) queued for more than 300s.",
+    )
+
+    async def collect(_engine, _factory, _settings):
+        return [alert]
+
+    route_args: list[tuple[object, object]] = []
+
+    async def route(alerts, sinks):
+        route_args.append((alerts, sinks))
+        return len(alerts) * len(sinks)
+
+    monkeypatch.setattr("app.cli.ops.collect_alerts", collect)
+    monkeypatch.setattr("app.cli.route_alerts", route)
+    settings = make_settings(ops_alert_webhook_url="https://hooks.example.test/alerts")
+
+    exit_code = await ops_check(settings)
+
+    assert exit_code == 1
+    assert "ops-check: warning code=queue_backlog" in capsys.readouterr().out
+    alerts, sinks = route_args[0]
+    assert alerts == [alert]
+    assert [type(sink).__name__ for sink in sinks] == ["LogAlertSink", "WebhookAlertSink"]
+
+
+async def test_ops_check_exits_two_when_the_check_cannot_run(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine = patch_ops_engine(monkeypatch)
+
+    async def collect(_engine, _factory, _settings):
+        raise RuntimeError("database exploded")
+
+    monkeypatch.setattr("app.cli.ops.collect_alerts", collect)
+
+    exit_code = await ops_check(make_settings())
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "ops-check: failed error=RuntimeError" in captured.err
+    assert "database exploded" not in captured.err
+    assert engine.disposed is True

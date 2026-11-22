@@ -55,6 +55,14 @@ class Settings(BaseSettings):
     rate_limit_backend: RateLimitBackend = "postgres"
     max_request_body_bytes: int = DEFAULT_MAX_BODY_BYTES
 
+    # Operations. `python -m app.cli ops-check` evaluates these thresholds and
+    # routes alerts to structured logs and the optional webhook.
+    ops_queue_backlog_threshold: int = 10
+    ops_queue_backlog_age_seconds: float = 300.0
+    ops_provider_error_threshold: int = 10
+    ops_provider_error_window_seconds: float = 900.0
+    ops_alert_webhook_url: str | None = None
+
     # Plan changes are simulated (no payment provider). The endpoint is disabled
     # unless this is true; unset means allowed everywhere except production.
     allow_simulated_plan_changes: bool | None = None
@@ -87,7 +95,7 @@ class Settings(BaseSettings):
     def _normalize_log_level(cls, value: object) -> object:
         return str(value).lower()
 
-    @field_validator("ai_base_url", "ai_api_key", mode="before")
+    @field_validator("ai_base_url", "ai_api_key", "ops_alert_webhook_url", mode="before")
     @classmethod
     def _blank_to_none(cls, value: object) -> object:
         """`.env.example` ships empty placeholders; treat them as unset."""
@@ -168,6 +176,29 @@ class Settings(BaseSettings):
         # Fail at startup rather than silently running unthrottled in a cluster.
         if value == "redis":
             raise ValueError("RATE_LIMIT_BACKEND=redis is not implemented yet")
+        return value
+
+    @field_validator("ops_queue_backlog_threshold", "ops_provider_error_threshold")
+    @classmethod
+    def _validate_ops_threshold(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("ops alert thresholds must be at least 1")
+        return value
+
+    @field_validator("ops_queue_backlog_age_seconds", "ops_provider_error_window_seconds")
+    @classmethod
+    def _validate_ops_window(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("ops alert windows must be positive")
+        return value
+
+    @field_validator("ops_alert_webhook_url")
+    @classmethod
+    def _validate_ops_webhook(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if not value.startswith(("https://", "http://")):
+            raise ValueError("OPS_ALERT_WEBHOOK_URL must be an http(s) URL")
         return value
 
     @model_validator(mode="after")

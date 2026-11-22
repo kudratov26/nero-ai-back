@@ -17,11 +17,13 @@ from app.api.csrf import OriginCheckMiddleware
 from app.api.explore import router as explore_router
 from app.api.generations import router as generations_router
 from app.api.health import router as health_router
+from app.api.metrics import router as metrics_router
 from app.api.problems import register_exception_handlers
 from app.api.request_context import RequestContextMiddleware
 from app.api.security_headers import SecurityHeadersMiddleware
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging
+from app.core.metrics import METRICS
 from app.core.rate_limit import build_rate_limiter
 from app.db.session import create_engine, create_session_factory
 from app.domain import messages as message_service
@@ -52,7 +54,11 @@ def create_app(
         limiter = build_rate_limiter(resolved, app.state.session_factory)
         await limiter.start()
         app.state.rate_limiter = limiter
-        provider = chat_provider if chat_provider is not None else build_chat_provider(resolved)
+        provider = (
+            chat_provider
+            if chat_provider is not None
+            else build_chat_provider(resolved, metrics=METRICS)
+        )
         app.state.chat_provider = provider
         app.state.storage = LocalStorage(resolved.storage_dir)
         try:
@@ -83,6 +89,7 @@ def create_app(
     app.add_middleware(SecurityHeadersMiddleware, hsts=resolved.is_production)
     register_exception_handlers(app)
     app.include_router(health_router)
+    app.include_router(metrics_router)
     app.include_router(auth_router)
     app.include_router(catalog_router)
     app.include_router(credits_router)
