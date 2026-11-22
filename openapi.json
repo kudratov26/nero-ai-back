@@ -1731,6 +1731,9 @@
           "206": {
             "description": "A byte range of the asset."
           },
+          "304": {
+            "description": "The caller's cached copy is still current."
+          },
           "404": {
             "content": {
               "application/problem+json": {

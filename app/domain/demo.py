@@ -30,7 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.db.models import Asset, Chat, Generation, IdempotencyKey, PostLike
 from app.db.session import session_scope
 from app.domain import credits
-from app.storage.local import LocalStorage
+from app.storage.base import Storage, StorageError
 
 log = structlog.get_logger(__name__)
 
@@ -55,7 +55,7 @@ def _removed(result: Any) -> int:
 
 async def reset_workspace(
     session_factory: async_sessionmaker[AsyncSession],
-    storage: LocalStorage,
+    storage: Storage,
     *,
     user_id: UUID,
 ) -> DemoResetResult:
@@ -86,8 +86,8 @@ async def reset_workspace(
     failed_unlinks = 0
     for key in storage_keys:
         try:
-            storage.delete(key)
-        except OSError:
+            await storage.delete(key)
+        except (OSError, StorageError):
             failed_unlinks += 1
 
     result = DemoResetResult(

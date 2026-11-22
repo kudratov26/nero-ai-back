@@ -32,7 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.security import hash_password
 from app.db.models import Asset, Post, User
 from app.db.seed import IMAGE_MODEL_ID, VIDEO_MODEL_ID
-from app.storage.local import LocalStorage, storage_key_for
+from app.storage.base import Storage, storage_key_for
 
 #: Bundled media shipped next to this module, so the Docker image (which copies
 #: `app/`) has everything the seed needs.
@@ -327,14 +327,14 @@ async def _ensure_system_author(session: AsyncSession) -> UUID:
     return SYSTEM_AUTHOR_ID
 
 
-async def _upsert_media(session: AsyncSession, storage: LocalStorage, *, author_id: UUID) -> int:
+async def _upsert_media(session: AsyncSession, storage: Storage, *, author_id: UUID) -> int:
     """Write every bundled file and upsert its asset row."""
     for media in MEDIA_SEEDS:
         data = media_bytes(media)
         asset_id = seed_uuid("asset", media.slug)
         extension = media.file_name.rsplit(".", 1)[1]
         key = storage_key_for(user_id=author_id, asset_id=asset_id, extension=extension)
-        storage.write(key, data)
+        await storage.write(key, data, content_type=media.mime_type)
 
         statement = pg_insert(Asset).values(
             id=asset_id,
@@ -402,7 +402,7 @@ async def _upsert_posts(session: AsyncSession, *, author_id: UUID, chat_model_id
 async def upsert_explore(
     session: AsyncSession,
     *,
-    storage: LocalStorage,
+    storage: Storage,
     chat_model_id: str,
 ) -> ExploreSeedResult:
     """Seed the system author, the bundled media, and the sixteen posts.

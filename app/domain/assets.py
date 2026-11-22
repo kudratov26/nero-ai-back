@@ -21,7 +21,7 @@ from app.core.ids import uuid7
 from app.db.models import Asset, Post
 from app.db.models.asset import ASSET_KINDS
 from app.db.session import session_scope
-from app.storage.local import LocalStorage, StorageError, StoredFile, storage_key_for
+from app.storage.base import Storage, StorageError, StoredFile, storage_key_for
 
 ASSET_NOT_FOUND_DETAIL = "That asset does not exist."
 INVALID_ASSET_KIND_DETAIL = "kind must be image or video."
@@ -87,7 +87,7 @@ async def _is_published_post_asset(session: AsyncSession, asset: Asset) -> bool:
 
 async def create_asset(
     session_factory: async_sessionmaker[AsyncSession],
-    storage: LocalStorage,
+    storage: Storage,
     *,
     user_id: UUID,
     kind: str,
@@ -124,7 +124,7 @@ async def create_asset(
 
 async def add_asset(
     session: AsyncSession,
-    storage: LocalStorage,
+    storage: Storage,
     *,
     user_id: UUID,
     kind: str,
@@ -154,7 +154,7 @@ async def add_asset(
         asset_id=asset_id,
         extension=extension_for_mime(mime_type),
     )
-    stored = storage.write(key, data)
+    stored = await storage.write(key, data, content_type=mime_type)
 
     asset = Asset(
         id=asset_id,
@@ -176,7 +176,7 @@ async def add_asset(
 
 async def load_for_read(
     session_factory: async_sessionmaker[AsyncSession],
-    storage: LocalStorage,
+    storage: Storage,
     *,
     asset_id: UUID,
     user_id: UUID | None,
@@ -198,7 +198,7 @@ async def load_for_read(
         if not can_read(asset, user_id=user_id, published_post=published_post):
             raise _not_found()
     try:
-        stored = storage.stat(asset.storage_key)
+        stored = await storage.stat(asset.storage_key)
     except (OSError, StorageError):
         raise _not_found() from None
     return StoredAsset(

@@ -50,7 +50,7 @@ from app.providers.base import (
     ProviderError,
     ProviderModel,
 )
-from app.storage.local import LocalStorage
+from app.storage.base import Storage
 
 log = structlog.get_logger(__name__)
 
@@ -192,7 +192,7 @@ async def report_progress(
 
 async def _settle_success(
     session_factory: async_sessionmaker[AsyncSession],
-    storage: LocalStorage,
+    storage: Storage,
     *,
     job: ClaimedJob,
     outputs: Sequence[GenerationOutput],
@@ -381,7 +381,7 @@ def _job_for(row: ClaimedJob) -> GenerationJob:
 
 async def run_job(
     session_factory: async_sessionmaker[AsyncSession],
-    storage: LocalStorage,
+    storage: Storage,
     provider: GenerationProvider,
     *,
     job: ClaimedJob,
@@ -465,7 +465,7 @@ async def run_job(
 
 async def process_one(
     session_factory: async_sessionmaker[AsyncSession],
-    storage: LocalStorage,
+    storage: Storage,
     provider: GenerationProvider,
     *,
     worker_id: str,

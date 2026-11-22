@@ -31,7 +31,7 @@ from app.core.config import Settings
 from app.db.models import CreditLedgerEntry
 from app.domain import billing, demo
 from app.domain.auth import AuthContext
-from app.storage.local import LocalStorage
+from app.storage.base import Storage
 
 router = APIRouter(prefix="/v1", tags=["credits"])
 
@@ -142,7 +142,7 @@ async def change_plan(
 async def reset_demo(
     context: Annotated[AuthContext, Depends(get_current_auth)],
     session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
-    storage: Annotated[LocalStorage, Depends(get_storage)],
+    storage: Annotated[Storage, Depends(get_storage)],
 ) -> Response:
     await demo.reset_workspace(session_factory, storage, user_id=context.user.id)
     return Response(status_code=204)

@@ -68,7 +68,7 @@ async def add_asset(
     asset_id = uuid7()
     key = storage_key or f"assets/{user_id}/{asset_id}.png"
     if write:
-        storage.write(key, data)
+        await storage.write(key, data, content_type=mime_type)
     async with session_scope(create_session_factory(engine)) as session:
         asset = Asset(
             id=asset_id,
@@ -534,3 +534,116 @@ async def test_unpublishing_a_post_hides_the_asset_again(
         response = await anonymous.get(f"/v1/assets/{asset.id}")
 
     assert_problem(response, 404, "not_found")
+
+
+async def test_a_matching_etag_returns_not_modified(
+    asset_env: AssetEnv, engine: AsyncEngine
+) -> None:
+    asset = await add_asset(engine, asset_env.storage, asset_env.user_id)
+    first = await asset_env.http.get(f"/v1/assets/{asset.id}")
+
+    response = await asset_env.http.get(
+        f"/v1/assets/{asset.id}",
+        headers={"if-none-match": first.headers["etag"]},
+    )
+
+    assert response.status_code == 304
+    assert response.content == b""
+    assert response.headers["etag"] == first.headers["etag"]
+
+
+async def test_if_modified_since_returns_not_modified(
+    asset_env: AssetEnv, engine: AsyncEngine
+) -> None:
+    asset = await add_asset(engine, asset_env.storage, asset_env.user_id)
+    first = await asset_env.http.get(f"/v1/assets/{asset.id}")
+
+    response = await asset_env.http.get(
+        f"/v1/assets/{asset.id}",
+        headers={"if-modified-since": first.headers["last-modified"]},
+    )
+
+    assert response.status_code == 304
+
+
+async def test_a_stale_if_range_returns_the_full_object(
+    asset_env: AssetEnv, engine: AsyncEngine
+) -> None:
+    asset = await add_asset(engine, asset_env.storage, asset_env.user_id)
+
+    response = await asset_env.http.get(
+        f"/v1/assets/{asset.id}",
+        headers={"range": "bytes=0-3", "if-range": '"stale"'},
+    )
+
+    assert response.status_code == 200
+    assert response.content == PNG_BYTES
+
+
+async def test_a_matching_if_range_returns_the_slice(
+    asset_env: AssetEnv, engine: AsyncEngine
+) -> None:
+    asset = await add_asset(engine, asset_env.storage, asset_env.user_id)
+    first = await asset_env.http.get(f"/v1/assets/{asset.id}")
+
+    response = await asset_env.http.get(
+        f"/v1/assets/{asset.id}",
+        headers={"range": "bytes=0-3", "if-range": first.headers["etag"]},
+    )
+
+    assert response.status_code == 206
+    assert response.content == PNG_BYTES[:4]
+
+
+async def test_multiple_ranges_fall_back_to_the_full_object(
+    asset_env: AssetEnv, engine: AsyncEngine
+) -> None:
+    asset = await add_asset(engine, asset_env.storage, asset_env.user_id)
+
+    response = await asset_env.http.get(
+        f"/v1/assets/{asset.id}",
+        headers={"range": "bytes=0-1,4-5"},
+    )
+
+    assert response.status_code == 200
+    assert response.content == PNG_BYTES
+
+
+async def test_a_malformed_range_is_rejected(asset_env: AssetEnv, engine: AsyncEngine) -> None:
+    asset = await add_asset(engine, asset_env.storage, asset_env.user_id)
+
+    response = await asset_env.http.get(
+        f"/v1/assets/{asset.id}",
+        headers={"range": "not-a-range"},
+    )
+
+    assert response.status_code == 400
+
+
+async def test_a_head_request_returns_metadata_without_bytes(
+    asset_env: AssetEnv, engine: AsyncEngine
+) -> None:
+    asset = await add_asset(engine, asset_env.storage, asset_env.user_id)
+    full = await asset_env.http.get(f"/v1/assets/{asset.id}")
+
+    response = await asset_env.http.head(f"/v1/assets/{asset.id}")
+
+    assert response.status_code == 200
+    assert response.content == b""
+    assert response.headers["content-length"] == str(len(PNG_BYTES))
+    assert response.headers["content-type"] == full.headers["content-type"]
+    assert response.headers["etag"] == full.headers["etag"]
+
+
+async def test_a_head_request_honors_a_range(asset_env: AssetEnv, engine: AsyncEngine) -> None:
+    asset = await add_asset(engine, asset_env.storage, asset_env.user_id)
+
+    response = await asset_env.http.head(
+        f"/v1/assets/{asset.id}",
+        headers={"range": "bytes=0-3"},
+    )
+
+    assert response.status_code == 206
+    assert response.content == b""
+    assert response.headers["content-length"] == "4"
+    assert response.headers["content-range"] == f"bytes 0-3/{len(PNG_BYTES)}"

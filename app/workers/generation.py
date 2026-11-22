@@ -38,7 +38,7 @@ from app.core.config import Settings
 from app.db.session import create_engine, create_session_factory
 from app.domain import generation_worker, holds
 from app.providers.base import GenerationProvider
-from app.storage.local import LocalStorage
+from app.storage import Storage, build_storage
 
 log = structlog.get_logger(__name__)
 
@@ -57,7 +57,7 @@ async def run_worker(
     settings: Settings,
     provider: GenerationProvider | None,
     *,
-    storage: LocalStorage | None = None,
+    storage: Storage | None = None,
     stop: asyncio.Event | None = None,
     on_idle: Callable[[], Awaitable[None]] | None = None,
 ) -> None:
@@ -72,7 +72,8 @@ async def run_worker(
 
     engine = create_engine(settings.database_url)
     factory = create_session_factory(engine)
-    resolved_storage = storage or LocalStorage(settings.storage_dir)
+    owns_storage = storage is None
+    resolved_storage = storage or build_storage(settings)
     stale_after = timedelta(seconds=settings.worker_stale_after_seconds)
     hold_ttl = timedelta(seconds=settings.hold_ttl_seconds)
     poll_interval = settings.worker_poll_interval_seconds
@@ -106,5 +107,7 @@ async def run_worker(
         await asyncio.gather(*(loop(index) for index in range(total)))
     finally:
         await provider.aclose()
+        if owns_storage:
+            await resolved_storage.aclose()
         await engine.dispose()
         log.info("worker.stopped")

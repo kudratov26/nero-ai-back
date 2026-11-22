@@ -40,7 +40,7 @@ from app.providers.base import (
     ProviderModel,
 )
 from app.providers.openai_compatible import build_chat_provider
-from app.storage.local import LocalStorage
+from app.storage import build_storage
 
 log = structlog.get_logger(__name__)
 
@@ -62,7 +62,7 @@ async def seed_catalog(settings: Settings | None = None) -> None:
     """
     resolved = settings or get_settings()
     engine = create_engine(resolved.database_url)
-    storage = LocalStorage(resolved.storage_dir)
+    storage = build_storage(resolved)
     try:
         factory = create_session_factory(engine)
         async with session_scope(factory) as session:
@@ -74,6 +74,7 @@ async def seed_catalog(settings: Settings | None = None) -> None:
                 chat_model_id=resolved.ai_chat_model,
             )
     finally:
+        await storage.aclose()
         await engine.dispose()
     log.info(
         "catalog.seeded",

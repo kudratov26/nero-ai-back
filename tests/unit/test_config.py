@@ -46,9 +46,13 @@ def test_session_ttl_must_be_positive() -> None:
         make_settings(session_ttl_days=0)
 
 
-def test_production_requires_real_secret() -> None:
+@pytest.mark.parametrize(
+    "secret",
+    [DEV_APP_SECRET, "", "   ", "CHANGE_ME_USE_OPENSSL_RAND_HEX_32"],
+)
+def test_production_requires_real_secret(secret: str) -> None:
     with pytest.raises(ValidationError):
-        make_settings(app_env="production", app_secret=DEV_APP_SECRET)
+        make_settings(app_env="production", app_secret=secret)
 
 
 def test_production_rejects_insecure_cookie() -> None:
@@ -297,3 +301,92 @@ def test_ops_webhook_rejects_a_non_http_scheme() -> None:
 
 def test_a_blank_ops_webhook_is_unset() -> None:
     assert make_settings(ops_alert_webhook_url="   ").ops_alert_webhook_url is None
+
+
+S3_SETTINGS = {
+    "storage_backend": "s3",
+    "s3_bucket": "nero-assets",
+    "s3_access_key_id": "AKIAIOSFODNN7EXAMPLE",
+    "s3_secret_access_key": "not-a-real-secret",
+}
+
+
+def test_storage_defaults_to_local() -> None:
+    settings = make_settings()
+
+    assert settings.storage_backend == "local"
+    assert settings.s3_region == "us-east-1"
+    assert settings.s3_prefix == ""
+    assert settings.s3_bucket is None
+
+
+def test_s3_settings_are_accepted_and_redacted() -> None:
+    settings = make_settings(**S3_SETTINGS)
+
+    assert settings.storage_backend == "s3"
+    assert settings.s3_access_key_id is not None
+    assert settings.s3_access_key_id.get_secret_value() == "AKIAIOSFODNN7EXAMPLE"
+    assert "not-a-real-secret" not in repr(settings)
+
+
+@pytest.mark.parametrize("field", ["s3_bucket", "s3_access_key_id", "s3_secret_access_key"])
+def test_s3_requires_each_credential(field: str) -> None:
+    values = dict(S3_SETTINGS)
+    values[field] = None
+
+    with pytest.raises(ValidationError):
+        make_settings(**values)
+
+
+def test_blank_s3_credentials_are_unset() -> None:
+    values = dict(S3_SETTINGS, s3_access_key_id="   ")
+
+    with pytest.raises(ValidationError):
+        make_settings(**values)
+
+
+def test_an_s3_endpoint_loses_its_trailing_slash() -> None:
+    settings = make_settings(**S3_SETTINGS, s3_endpoint_url="https://s3.example.test/")
+
+    assert settings.s3_endpoint_url == "https://s3.example.test"
+
+
+def test_an_s3_endpoint_must_be_http_or_https() -> None:
+    with pytest.raises(ValidationError):
+        make_settings(**S3_SETTINGS, s3_endpoint_url="ftp://s3.example.test")
+
+
+def test_production_rejects_a_plaintext_s3_endpoint() -> None:
+    with pytest.raises(ValidationError):
+        make_settings(
+            **S3_SETTINGS,
+            s3_endpoint_url="http://minio.internal:9000",
+            app_env="production",
+            app_secret="a-real-production-secret",
+        )
+
+
+def test_production_accepts_an_https_s3_endpoint() -> None:
+    settings = make_settings(
+        **S3_SETTINGS,
+        s3_endpoint_url="https://s3.example.test",
+        app_env="production",
+        app_secret="a-real-production-secret",
+    )
+
+    assert settings.s3_endpoint_url == "https://s3.example.test"
+
+
+def test_the_s3_prefix_is_normalized() -> None:
+    assert make_settings(s3_prefix="/nero/assets/").s3_prefix == "nero/assets"
+
+
+@pytest.mark.parametrize("value", ["../escape", "a/../b", "a\x00b"])
+def test_the_s3_prefix_cannot_escape_the_bucket(value: str) -> None:
+    with pytest.raises(ValidationError):
+        make_settings(**S3_SETTINGS, s3_prefix=value)
+
+
+def test_the_s3_region_must_not_be_blank() -> None:
+    with pytest.raises(ValidationError):
+        make_settings(**S3_SETTINGS, s3_region="   ")

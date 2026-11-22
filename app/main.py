@@ -29,7 +29,7 @@ from app.db.session import create_engine, create_session_factory
 from app.domain import messages as message_service
 from app.providers.base import ChatProvider
 from app.providers.openai_compatible import build_chat_provider
-from app.storage.local import LocalStorage
+from app.storage import build_storage
 
 
 def create_app(
@@ -60,7 +60,8 @@ def create_app(
             else build_chat_provider(resolved, metrics=METRICS)
         )
         app.state.chat_provider = provider
-        app.state.storage = LocalStorage(resolved.storage_dir)
+        storage = build_storage(resolved)
+        app.state.storage = storage
         try:
             yield
         finally:
@@ -68,6 +69,7 @@ def create_app(
                 await message_service.drain_abort_finalizers()
                 if provider is not None:
                     await provider.aclose()
+                await storage.aclose()
             finally:
                 await engine.dispose()
 

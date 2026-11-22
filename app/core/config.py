@@ -7,7 +7,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal, Self
 
-from pydantic import field_validator, model_validator
+from pydantic import SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEV_APP_SECRET = "change-me-in-production"
@@ -85,17 +85,34 @@ class Settings(BaseSettings):
     # never settled it, so the sweeper fails the work and refunds the hold.
     hold_ttl_seconds: float = 3600.0
 
-    # Assets are served from local disk in dev. The S3 adapter is not implemented,
-    # so a non-local backend fails at startup instead of writing to the wrong place.
-    storage_backend: Literal["local"] = "local"
+    # Assets are served from local disk in development, or from an S3-compatible
+    # bucket in production. The adapter is chosen once at startup.
+    storage_backend: Literal["local", "s3"] = "local"
     storage_dir: Path = Path("./storage")
+    s3_bucket: str | None = None
+    s3_region: str = "us-east-1"
+    s3_endpoint_url: str | None = None
+    s3_access_key_id: SecretStr | None = None
+    s3_secret_access_key: SecretStr | None = None
+    s3_session_token: SecretStr | None = None
+    s3_prefix: str = ""
 
     @field_validator("log_level", mode="before")
     @classmethod
     def _normalize_log_level(cls, value: object) -> object:
         return str(value).lower()
 
-    @field_validator("ai_base_url", "ai_api_key", "ops_alert_webhook_url", mode="before")
+    @field_validator(
+        "ai_base_url",
+        "ai_api_key",
+        "ops_alert_webhook_url",
+        "s3_bucket",
+        "s3_endpoint_url",
+        "s3_access_key_id",
+        "s3_secret_access_key",
+        "s3_session_token",
+        mode="before",
+    )
     @classmethod
     def _blank_to_none(cls, value: object) -> object:
         """`.env.example` ships empty placeholders; treat them as unset."""
@@ -148,6 +165,32 @@ class Settings(BaseSettings):
         if not text:
             raise ValueError("STORAGE_DIR must not be blank")
         return Path(text)
+
+    @field_validator("s3_region")
+    @classmethod
+    def _require_s3_region(cls, value: str) -> str:
+        trimmed = value.strip()
+        if not trimmed:
+            raise ValueError("S3_REGION must not be blank")
+        return trimmed
+
+    @field_validator("s3_endpoint_url")
+    @classmethod
+    def _validate_s3_endpoint(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        trimmed = value.rstrip("/")
+        if not trimmed.startswith(("https://", "http://")):
+            raise ValueError("S3_ENDPOINT_URL must be an http(s) URL")
+        return trimmed
+
+    @field_validator("s3_prefix")
+    @classmethod
+    def _normalize_s3_prefix(cls, value: str) -> str:
+        trimmed = value.strip().strip("/")
+        if "\x00" in trimmed or ".." in trimmed.split("/"):
+            raise ValueError("S3_PREFIX must be a safe key prefix")
+        return trimmed
 
     @field_validator("worker_concurrency")
     @classmethod
@@ -202,10 +245,33 @@ class Settings(BaseSettings):
         return value
 
     @model_validator(mode="after")
+    def _validate_storage(self) -> Self:
+        if self.storage_backend == "s3":
+            missing = [
+                name
+                for name, value in (
+                    ("S3_BUCKET", self.s3_bucket),
+                    ("S3_ACCESS_KEY_ID", self.s3_access_key_id),
+                    ("S3_SECRET_ACCESS_KEY", self.s3_secret_access_key),
+                )
+                if value is None
+            ]
+            if missing:
+                raise ValueError("STORAGE_BACKEND=s3 requires " + ", ".join(missing))
+            if (
+                self.is_production
+                and self.s3_endpoint_url is not None
+                and self.s3_endpoint_url.startswith("http://")
+            ):
+                raise ValueError("S3_ENDPOINT_URL must use https in production")
+        return self
+
+    @model_validator(mode="after")
     def _validate_production(self) -> Self:
         if self.app_env is not AppEnv.PRODUCTION:
             return self
-        if self.app_secret == DEV_APP_SECRET:
+        secret = self.app_secret.strip()
+        if not secret or secret == DEV_APP_SECRET or secret.startswith("CHANGE_ME"):
             raise ValueError("APP_SECRET must be set to a real value in production")
         if self.cookie_secure is False:
             raise ValueError("COOKIE_SECURE must not be false in production")

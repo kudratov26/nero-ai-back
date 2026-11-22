@@ -13,7 +13,7 @@ from app.core.config import Settings
 from app.core.rate_limit import RateLimiter
 from app.domain.auth import AuthContext, authenticate
 from app.providers.base import ChatProvider
-from app.storage.local import LocalStorage
+from app.storage.base import Storage
 
 
 def get_app_settings(request: Request) -> Settings:
@@ -40,12 +40,12 @@ def get_chat_provider(request: Request) -> ChatProvider | None:
     return cast(ChatProvider | None, provider)
 
 
-def get_storage(request: Request) -> LocalStorage:
+def get_storage(request: Request) -> Storage:
     """Return the app-wide storage adapter built by the lifespan."""
     storage = getattr(request.app.state, "storage", None)
     if storage is None:
         raise RuntimeError("the storage adapter is not initialized")
-    return cast(LocalStorage, storage)
+    return cast(Storage, storage)
 
 
 async def enforce_rate_limit(
