@@ -304,7 +304,7 @@ caps are configured; no secrets in logs.
   - Alerts for readiness, provider errors, queue depth, invariant violations.
   - Acceptance: restore drill documented; alert routes tested.
 
-- [ ] **B7.3 Production deployment**
+- [x] **B7.3 Production deployment**
   - Dockerfile, Compose/prod manifests, release migration step, S3 storage adapter.
   - HTTPS, `COOKIE_SECURE=true`, `FRONTEND_ORIGIN`, provider spend cap.
   - Acceptance: staging smoke passes; rollback procedure documented.
@@ -355,4 +355,4 @@ B7.1 -> B7.2 -> B7.3 -> B7.4 (blocked on provider key)
 | 4 Explore | complete (B4.1–B4.3) |
 | 5 Generations | complete (B5.1–B5.5) |
 | 6 Frontend | complete (B6.1–B6.4; B6.2–B6.3 shipped in `nero-ai-front`) |
-| 7 Deploy | not started |
+| 7 Deploy | in progress (B7.1–B7.3 done; B7.4 blocked on provider key and budget) |

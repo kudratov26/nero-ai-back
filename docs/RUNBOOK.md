@@ -1,19 +1,25 @@
 # Operations runbook
 
 This runbook covers the single-instance v1 deployment: one API process, one worker
-process, PostgreSQL 16, and the `STORAGE_DIR` asset volume.
+process, PostgreSQL 16, and either a shared `STORAGE_DIR` volume or an S3-compatible
+bucket.
 
+- **Deployment**: `deploy/compose.yml`, one-shot release job, Caddy TLS.
 - **Readiness**: database reachable and Alembic at head.
 - **Metrics**: `GET /metrics`, Prometheus text format.
 - **Alerts**: `python -m app.cli ops-check`, exit `0` healthy, `1` alert, `2` check failed.
-- **Backups**: PostgreSQL custom-format dump plus the asset directory, restored together.
+- **Backups**: PostgreSQL custom-format dump plus the asset volume or bucket, restored
+  together.
 - **Restore drill**: dated record at the end of this file.
+- **Staging smoke**: `uv run python -m scripts.smoke`, run after every release.
 
 Nothing here prints or stores a provider key, a session cookie, a prompt, or message
-content. The alert webhook URL can carry a token, so treat it as a secret and never log
-it.
+content. The alert webhook URL and S3 credentials can carry secrets, so treat them as
+sensitive and never log them.
 
 ## 1. Processes
+
+Development:
 
 ```bash
 uv run uvicorn app.main:app --port 8000       # API
@@ -23,9 +29,22 @@ uv run python -m app.cli seed                  # idempotent catalog refresh
 uv run python -m app.cli provider-check        # optional chat-gateway probe
 ```
 
-The API and worker must share `DATABASE_URL` and `STORAGE_DIR`. A Generation becomes
-`queued` before the worker renders it; if the queue never drains, first confirm the
-worker points at the same database and storage root.
+Container deployment:
+
+```bash
+docker compose -f deploy/compose.yml up -d --build
+docker compose -f deploy/compose.yml ps
+docker compose -f deploy/compose.yml logs -f release
+```
+
+The stack starts `db`, runs one `release` container (`alembic upgrade head` then
+`python -m app.cli seed`), and only then starts `api` and `worker`. Caddy is the only
+published service. Migrations never run in the API or worker entry point.
+
+The API, worker, and release job must share `DATABASE_URL` and, when
+`STORAGE_BACKEND=local`, the `storage` volume. With `STORAGE_BACKEND=s3` they share the
+bucket instead. A Generation becomes `queued` before the worker renders it; if the queue
+never drains, first confirm the worker points at the same database and storage backend.
 
 ## 2. Health probes
 
@@ -161,27 +180,36 @@ Credit invariant, plus sink isolation and webhook payload delivery.
 
 ## 6. Backups
 
-Back up the database and the asset directory as one set. A database row without its
-asset bytes, or bytes without the row, is not a restorable Generation.
+Back up the database and the asset store as one set. A database row without its asset
+bytes, or bytes without the row, is not a restorable Generation. Use the application
+release tag as the backup label so a restore knows which schema and code belong together.
 
 ```bash
-# PostgreSQL: custom format, compressed, no owner/ACL assumptions.
-pg_dump --format=custom --no-owner --file="/backups/nero-$(date -u +%Y%m%dT%H%M%SZ).dump" "$DATABASE_URL"
+# PostgreSQL: strip the SQLAlchemy driver suffix first.
+PG_URL="${DATABASE_URL/postgresql+asyncpg/postgresql}"
+pg_dump --format=custom --no-owner \
+  --file="/backups/nero-$(date -u +%Y%m%dT%H%M%SZ).dump" "$PG_URL"
 
-# Assets: the whole storage root, preserving relative paths.
+# Local storage volume: preserve relative paths.
 tar --create --gzip --file="/backups/storage-$(date -u +%Y%m%dT%H%M%SZ).tar.gz" \
   -C /srv/nero storage
+
+# S3: copy one consistent version of the prefix. Enable bucket versioning so an
+# overwrite during the copy is recoverable; provider replication is not a substitute
+# for an off-account backup.
+aws s3 sync "s3://${S3_BUCKET}/${S3_PREFIX}" "/backups/s3/$(date -u +%Y%m%dT%H%M%SZ)"
 ```
 
 - Run daily and keep 7 days, per the deployment contract.
 - Store both files off the host and encrypt them at rest; the database contains password
   hashes and session-token hashes, and assets are user content.
-- Record the dump's `alembic_version` with the backup so a restore knows which release it
-  belongs to.
+- Record the dump's `alembic_version` and the image tag with the backup.
 - Verify a dump without restoring over production: `pg_restore --list <dump>` must list the
   tables, and the restore drill below must pass on a scratch database.
-- A provider key or `.env` is never part of a backup. Restore configuration separately
-  from the secret manager.
+- A provider key, S3 credential, or `.env` is never part of a backup. Restore
+  configuration separately from the secret manager.
+- Enable S3 versioning and lifecycle rules before the first production write; a lifecycle
+  rule that expires noncurrent versions is itself part of the retention policy.
 
 ### Restore procedure
 
@@ -198,6 +226,7 @@ pg_restore --no-owner --clean --if-exists --dbname=nero_restored /backups/<dump>
 
 # 3. Restore the assets into the configured STORAGE_DIR.
 tar --extract --gzip --file=/backups/<storage>.tar.gz -C /srv/nero
+# S3 instead: aws s3 sync /backups/<s3-snapshot> "s3://${S3_BUCKET}/${S3_PREFIX}"
 
 # 4. Migrate forward if the backup predates the current release.
 DATABASE_URL=postgresql+asyncpg://... uv run alembic upgrade head
@@ -206,11 +235,13 @@ DATABASE_URL=postgresql+asyncpg://... uv run python -m app.cli seed
 # 5. Start the API, then the worker, and verify.
 curl -fsS http://localhost:8000/health/ready
 uv run python -m app.cli ops-check
+uv run python -m scripts.smoke --base-url https://app.example.com
 ```
 
 After restore, spot-check one owner's `GET /v1/generations` and open one asset URL. A
-`404` for an asset that exists in the database usually means the asset archive was
-restored to the wrong root.
+`404` for an asset that exists in the database usually means the asset archive or bucket
+was restored to the wrong root or prefix. The smoke script's ranged asset check catches
+that before traffic arrives.
 
 ## 7. Restore drill record
 
@@ -255,13 +286,95 @@ The drill validates the dump/restore commands and the database-to-assets pairing
 it after a migration that changes storage layout, after a PostgreSQL major upgrade, and
 before the first production release.
 
-## 8. Release and rollback
+## 8. Production deployment
 
-1. Run `alembic upgrade head` as a release step, then `python -m app.cli seed`.
-2. Deploy the API, wait for `/health/ready`, then deploy or restart the worker.
-3. Run `python -m app.cli ops-check`; expect exit `0`.
+### 8.1 Prepare
 
-If readiness never passes, roll back the application image. Migrations are
-backward-compatible for one release (expand/contract), so the previous image can run on
-the new schema. If the schema itself must be restored, follow the restore procedure from
-the latest verified dump pair rather than running a downgrade in production.
+1. Point DNS at the host and open ports 80/443 (or the staging ports you chose).
+2. Create the Compose interpolation file and the application environment file:
+
+   ```bash
+   cp deploy/.env.example deploy/.env
+   cp deploy/production.env.example deploy/production.env
+   chmod 600 deploy/.env deploy/production.env
+   ```
+
+3. Fill in `deploy/.env`:
+   - `POSTGRES_PASSWORD`: a random password.
+   - `NERO_DOMAIN`: the public hostname, or `localhost` for a local staging run.
+   - `NERO_IMAGE_TAG`: the release SHA you are deploying.
+   - `NERO_HTTP_PORT` / `NERO_HTTPS_PORT`: defaults `80` / `443`.
+4. Fill in `deploy/production.env`; `DATABASE_URL`'s password must match
+   `POSTGRES_PASSWORD`.
+   - `APP_ENV=production`, a real `APP_SECRET` (`openssl rand -hex 32`), and
+     `COOKIE_SECURE=true`.
+   - `FRONTEND_ORIGIN` is the exact browser origin that proxies `/api/*`.
+   - `ALLOW_SIMULATED_PLAN_CHANGES=false`.
+   - `AI_API_KEY` only after a spend cap is set in the provider dashboard. A missing key
+     keeps the chat model out of the catalog.
+   - `STORAGE_BACKEND=local` with the shared volume, or `s3` with `S3_BUCKET`,
+     `S3_ACCESS_KEY_ID`, and `S3_SECRET_ACCESS_KEY`. The endpoint must be HTTPS in
+     production.
+   - `OPS_ALERT_WEBHOOK_URL` is optional and is treated as a secret.
+5. S3 bucket policy: grant object `GET`, `HEAD`, `PUT`, and `DELETE` under `S3_PREFIX`
+   only. The API does not list the bucket. Enable versioning and the retention policy.
+
+### 8.2 Build and start
+
+```bash
+docker build -t nero-ai-back:"$(git rev-parse --short HEAD)" .
+NERO_IMAGE_TAG="$(git rev-parse --short HEAD)" \
+  docker compose -f deploy/compose.yml up -d
+docker compose -f deploy/compose.yml ps
+docker compose -f deploy/compose.yml logs -f release
+```
+
+The release container runs `alembic upgrade head` and `python -m app.cli seed`; the API
+and worker do not start until it exits `0`. If the release log shows a failed migration
+or seed, the API is still on the previous release and no traffic reaches it.
+
+### 8.3 Verify
+
+```bash
+curl -fsS https://app.example.com/health/ready
+uv run python -m scripts.smoke --base-url https://app.example.com \
+  --origin https://app.example.com
+docker compose -f deploy/compose.yml exec api python -m app.cli ops-check
+```
+
+Expected: readiness `{"status":"ready"}`, every smoke check `ok`, and `ops-check: ok`.
+The smoke script signs up a throwaway `smoke-*@example.com` account unless
+`SMOKE_EMAIL`/`SMOKE_PASSWORD` name a dedicated account. Signup is rate-limited per IP;
+use the dedicated account for repeated staging runs.
+
+For a local staging run:
+
+```bash
+NERO_DOMAIN=localhost NERO_HTTPS_PORT=8443 \
+  docker compose -f deploy/compose.yml up -d
+uv run python -m scripts.smoke --base-url https://localhost:8443 --insecure
+```
+
+Caddy uses its local CA for `localhost`, so `--insecure` is correct there and nowhere
+else.
+
+### 8.4 Rollback
+
+Migrations are backward-compatible for one release (expand/contract), so the previous
+image can run on the new schema. Do not run `alembic downgrade` in production.
+
+```bash
+# Deploy the previous image without re-running the release job or touching the db.
+NERO_IMAGE_TAG='<previous-sha>' \
+  docker compose -f deploy/compose.yml up -d --no-deps api worker
+docker compose -f deploy/compose.yml logs -f api
+curl -fsS https://app.example.com/health/ready
+```
+
+`--no-deps` is deliberate: re-running the old release container against a newer schema
+can fail because its Alembic script directory does not know the new revision. The API
+and worker are the only processes that need to move.
+
+If the schema itself is wrong, stop the API and worker and follow the restore procedure
+in §6 from the latest verified database and asset pair. Restoring a database without its
+assets leaves every asset URL `404`.

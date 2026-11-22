@@ -8,8 +8,8 @@ The browser never receives a provider key.
 Generations with a worker queue, Explore, asset delivery, and demo reset run against
 PostgreSQL; the Next.js app consumes this service in API mode; the committed
 `openapi.json` is the contract both sides generate from. Phase 7 (hardening and
-deployment) is in progress: security hardening and operations are done, production
-deployment is next.
+deployment) is in progress: security hardening, operations, and production deployment
+are done; the real Image/Video provider remains blocked on a key and budget.
 
 Image and Video are deterministic mock providers until a real provider key and adapter
 exist. They are labelled `Demo`, and the catalog never advertises a model whose provider
@@ -21,7 +21,8 @@ is not configured. Chat runs on DeepSeek V4.1 Flash through the Coarena gateway 
 - [`docs/SPEC.md`](docs/SPEC.md): product and technical specification, API contract,
   data model, security, deployment.
 - [`docs/ROADMAP.md`](docs/ROADMAP.md): phased tickets and gates.
-- [`docs/RUNBOOK.md`](docs/RUNBOOK.md): probes, metrics, alerts, backup and restore.
+- [`docs/RUNBOOK.md`](docs/RUNBOOK.md): deployment, probes, metrics, alerts, backup and
+  restore.
 - [`AGENTS.md`](AGENTS.md): rules for the AI agent building this repository.
 - [`GLOSSARY.md`](GLOSSARY.md): domain vocabulary.
 - [`docs/adr/`](docs/adr/): decisions.
@@ -31,7 +32,7 @@ is not configured. Chat runs on DeepSeek V4.1 Flash through the Coarena gateway 
 - Python 3.12, FastAPI, Pydantic v2
 - PostgreSQL 16, SQLAlchemy 2 async, asyncpg, Alembic
 - httpx, uv, ruff, mypy, pytest
-- Docker Compose for local PostgreSQL
+- Docker Compose for local PostgreSQL and the production-shaped deployment stack
 
 ## Quick start
 
@@ -200,8 +201,15 @@ gitignored, and `.env.example` contains placeholders only.
 | `AI_CHAT_MODEL` | `deepseek-v4.1-flash` | Must exist on the gateway. |
 | `AI_REQUEST_TIMEOUT_SECONDS` | `120` | Read timeout for one provider call. |
 | `GENERATION_MODE` | `mock` | `live` has no Image/Video adapter yet, so those models stay unadvertised. |
-| `STORAGE_BACKEND` | `local` | Only `local` is implemented; S3 is Phase 7. |
-| `STORAGE_DIR` | `./storage` | Asset root. The API and worker must share it. |
+| `STORAGE_BACKEND` | `local` | `local` or `s3`. Production can use a shared volume or a managed bucket. |
+| `STORAGE_DIR` | `./storage` | Local asset root. The API, worker, and release job must share it. |
+| `S3_BUCKET` | unset | Required when `STORAGE_BACKEND=s3`. |
+| `S3_REGION` | `us-east-1` | Signing region. |
+| `S3_ENDPOINT_URL` | AWS default | S3-compatible endpoint; must be HTTPS in production. |
+| `S3_ACCESS_KEY_ID` | unset | Required when `STORAGE_BACKEND=s3`; server-only. |
+| `S3_SECRET_ACCESS_KEY` | unset | Required when `STORAGE_BACKEND=s3`; redacted from logs and repr. |
+| `S3_SESSION_TOKEN` | unset | Optional temporary-credential token. |
+| `S3_PREFIX` | empty | Key prefix inside a shared bucket. |
 | `WORKER_CONCURRENCY` | `2` | Number of claim loops in the worker process. |
 | `WORKER_POLL_INTERVAL_SECONDS` | `1` | Sleep between empty claims. |
 | `WORKER_STALE_AFTER_SECONDS` | `300` | A lock older than this is recovered. |
@@ -210,7 +218,38 @@ gitignored, and `.env.example` contains placeholders only.
 | `SENTRY_DSN` | unset | Reserved; error reporting is not wired yet. |
 
 Production additionally requires a real `APP_SECRET`, secure cookies (`COOKIE_SECURE`
-unset or true; `false` is rejected), HTTPS at the reverse proxy, and a provider spend cap.
+unset or true; `false` is rejected), HTTPS at the reverse proxy, `FRONTEND_ORIGIN` set
+to the browser origin, and a provider spend cap. `STORAGE_BACKEND=s3` requires the
+bucket and both keys; a plaintext `S3_ENDPOINT_URL` is rejected when
+`APP_ENV=production`.
+
+## Deploy
+
+`deploy/compose.yml` is the production-shaped single-host stack: PostgreSQL, a one-shot
+release job, the API, one worker, and Caddy for TLS. The API port is not published.
+
+```bash
+cp deploy/.env.example deploy/.env                     # POSTGRES_PASSWORD, domain, tag
+cp deploy/production.env.example deploy/production.env # app settings
+# Fill both in; DATABASE_URL's password must match POSTGRES_PASSWORD.
+docker compose -f deploy/compose.yml up -d --build
+docker compose -f deploy/compose.yml ps
+docker compose -f deploy/compose.yml logs -f release
+uv run python -m scripts.smoke --base-url https://app.example.com
+```
+
+For a local staging run use `NERO_DOMAIN=localhost` and
+`NERO_HTTPS_PORT=8443`, then run the smoke script with
+`--base-url https://localhost:8443 --insecure` (the Caddy local CA). The release job
+runs `alembic upgrade head` and `python -m app.cli seed` before the API and worker
+start. Rollback deploys the previous image tag; schema changes are backward-compatible
+for one release, and a bad schema restore uses the dump pair instead of a production
+downgrade. Full commands and the checklist are in `docs/RUNBOOK.md` §8.
+
+For a managed PostgreSQL instance or S3 bucket, point `DATABASE_URL` and the `S3_*`
+variables at them. Remove the bundled `db` service and its `depends_on` entries when
+using a managed database; with S3 the `storage` volume is unused and can be removed.
+Back up the database and the bucket/volume as one set.
 
 ## Frontend in API mode
 

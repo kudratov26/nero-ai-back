@@ -66,7 +66,7 @@ FastAPI  ──► PostgreSQL
    ├──► Coarena / OpenAI-compatible chat provider (streaming)
    ├──► mock image provider
    ├──► mock video provider
-   └──► asset storage (local disk in dev, S3-compatible later)
+   └──► asset storage (local disk in dev, S3-compatible in production)
    ▲
    └── Generation worker (polling Postgres queue)
 ```
@@ -819,12 +819,17 @@ Validation:
 
 ### 12.4 Asset delivery
 
-- Storage key: `assets/{userId}/{assetId}.{ext}`; local root is `STORAGE_DIR`.
+- Storage key: `assets/{userId}/{assetId}.{ext}`. `STORAGE_BACKEND=local` resolves it
+  under `STORAGE_DIR`; `STORAGE_BACKEND=s3` maps it to `S3_PREFIX/{key}` in the bucket.
+- The storage port is async and exposes `write`, `stat`, `iter_range`, `delete`, and
+  `aclose`. Local file work runs in worker threads; S3 uses signed httpx requests.
 - Serve only through `GET /v1/assets/{id}`; never mount the storage directory statically.
 - Permission: owner, or the asset belongs to a published Explore post.
-- Set `Content-Type`, `Content-Length`, `ETag`, `Cache-Control: private, max-age=3600`
-  for owner assets; public gallery assets may be `public, max-age=86400`.
-- Support HTTP Range for video through the framework's file response.
+- Set `Content-Type`, `Content-Length`, `ETag`, `Last-Modified`,
+  `Cache-Control: private, max-age=3600` for owner assets; public gallery assets may be
+  `public, max-age=86400`.
+- Support conditional `304` and HTTP Range for video by streaming the requested slice
+  from the storage port. A multi-range request may fall back to the full object.
 - Reject path traversal and unknown ids with 404.
 
 ## 13. Explore
@@ -922,8 +927,15 @@ Environment variables (validated at startup; fail fast on missing required value
 | `AI_CHAT_MODEL` | chat | `deepseek-v4.1-flash` | confirm exact slug with the gateway |
 | `AI_REQUEST_TIMEOUT_SECONDS` | no | `120` | read timeout |
 | `GENERATION_MODE` | no | `mock` | mock or live |
-| `STORAGE_DIR` | no | `./storage` | local asset root; the API and worker must share it |
+| `STORAGE_DIR` | no | `./storage` | local asset root; the API, worker, and release job must share it |
 | `STORAGE_BACKEND` | no | `local` | local or s3 |
+| `S3_BUCKET` | s3 | — | bucket name |
+| `S3_REGION` | no | `us-east-1` | signing region |
+| `S3_ENDPOINT_URL` | no | AWS regional endpoint | S3-compatible endpoint; HTTPS is required in production |
+| `S3_ACCESS_KEY_ID` | s3 | — | server only |
+| `S3_SECRET_ACCESS_KEY` | s3 | — | server only; redacted from logs and repr |
+| `S3_SESSION_TOKEN` | no | — | optional temporary-credential token |
+| `S3_PREFIX` | no | empty | key prefix inside a shared bucket |
 | `WORKER_CONCURRENCY` | no | `2` | claim loops in the worker process |
 | `WORKER_POLL_INTERVAL_SECONDS` | no | `1` | sleep between empty claims |
 | `WORKER_STALE_AFTER_SECONDS` | no | `300` | recover a lock older than this |
@@ -1035,20 +1047,35 @@ clean migrated database and roll back per test.
 
 ## 19. Deployment
 
-- Multi-stage `Dockerfile` (Python 3.12 slim), non-root user, `uv sync --frozen --no-dev`.
-- Compose services: `api`, `worker`, `db`; `db` volume; `storage` volume.
-- Run `alembic upgrade head` as a release step, not on every container start.
-- Run `python -m app.cli seed` after migrations. It is idempotent and refreshes the plan
-  and model catalogs; `available` is derived from the environment, so this is where a
-  missing provider key keeps a model out of the catalog.
+- Multi-stage `Dockerfile` (Python 3.12 slim), non-root user, `uv sync --frozen --no-dev`,
+  liveness healthcheck, and proxy-header handling. The API and worker use one image.
+- `deploy/compose.yml` is the production-shaped single-host stack: `db`, one-shot
+  `release`, `api`, `worker`, and a Caddy TLS proxy. Only Caddy publishes ports; the API
+  port stays on the private network. `db`, `storage`, and Caddy state use named volumes.
+- Use `deploy/.env` for Compose interpolation and `deploy/production.env` for application
+  settings. Both are gitignored; the checked-in examples contain placeholders only.
+- The `release` service runs `alembic upgrade head` and `python -m app.cli seed` once per
+  deploy. The API and worker wait for it to complete; migrations never run on every
+  container start.
+- `python -m app.cli seed` is idempotent and refreshes the plan, model, and Explore
+  catalogs. `available` is derived from the environment, so a missing provider key keeps
+  a model out of the catalog.
 - One API instance and one worker for v1. SQLite is not supported.
-- Production: managed PostgreSQL, S3-compatible storage, HTTPS, provider spend cap,
-  backups daily with 7-day retention, and log retention.
-- Back up PostgreSQL with `pg_dump -Fc` and the asset directory as one set, because a
-  Generation row and its asset bytes must be restored together. The commands, restore
-  drill, and dated drill record live in `docs/RUNBOOK.md`.
+- Production: managed PostgreSQL or the bundled `db`, local volume or an S3-compatible
+  bucket, HTTPS at Caddy or an upstream proxy, a provider spend cap, backups daily with
+  7-day retention, and log retention.
+- S3 uses path-style URLs and SigV4 header signing. Grant only object `GET`, `HEAD`,
+  `PUT`, and `DELETE` under `S3_PREFIX`; the API never lists the bucket. Credentials come
+  from the environment and are held in `SecretStr` settings.
+- `uv run python -m scripts.smoke --base-url ... --origin ...` checks liveness, readiness,
+  metrics, catalog, authentication, and a ranged seeded-asset download after a release.
+  Exit `0` is healthy; `1` is a failed check; `2` is a usage error.
+- Back up PostgreSQL with `pg_dump -Fc` and the asset directory or bucket as one set,
+  because a Generation row and its asset bytes must be restored together. The commands,
+  restore drill, and dated drill record live in `docs/RUNBOOK.md`.
 - Migrations are backward-compatible for one release (expand/contract) before scaling to
-  multiple instances.
+  multiple instances. Rollback deploys the previous image; restoring a schema uses the
+  latest verified dump pair rather than a production downgrade.
 
 ## 20. v1 acceptance criteria
 

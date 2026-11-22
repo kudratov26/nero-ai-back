@@ -29,6 +29,9 @@ here in the same PR.
 | **Generation** | A persisted Image or Video job with status, progress, cost, and Assets. |
 | **Worker** | The separate process (`python -m app.worker`) that claims queued Generations, renders them with the configured provider, and settles their Credits. |
 | **Asset** | A stored image or video file owned by an Account or attached to an Explore Post. |
+| **Storage port** | The async `write`/`stat`/`iter_range`/`delete` interface shared by the local and S3 adapters. Domain code never builds a filesystem path from a client value. |
+| **Storage backend** | `local` (a shared `STORAGE_DIR`) or `s3` (a bucket under `S3_PREFIX`, signed with SigV4). Chosen once at startup. |
+| **Release job** | The one-shot deploy step that runs `alembic upgrade head` and `python -m app.cli seed` before the API and worker start. |
 | **Explore** | The public gallery of curated Posts. |
 | **Post** | A published gallery item with a prompt, Model, params, and Asset. |
 | **System author** | The internal Account that owns seeded Explore Posts and their Assets. It has no usable password and cannot sign in. |
@@ -47,6 +50,7 @@ here in the same PR.
 | **Alert** | A fixed condition an operator must act on: `readiness_failed`, `queue_backlog`, `provider_error_rate`, or `credit_invariant_violation`. Delivered by `ops-check` to logs and the optional webhook. |
 | **ops-check** | The read-only command (`python -m app.cli ops-check`) that evaluates readiness, backlog, provider errors, and Credit invariants, then exits `0`, `1`, or `2`. |
 | **Restore drill** | A dated rehearsal that restores a database dump and the asset directory into a scratch environment and verifies they agree. Documented in `docs/RUNBOOK.md`. |
+| **Staging smoke** | The post-release check (`python -m scripts.smoke`) for liveness, readiness, metrics, catalog, authentication, and a ranged seeded-asset download. |
 | **Gate** | The acceptance checklist that must pass before the next roadmap phase starts. |
 | **Hold expiry** | The deadline after which an uncommitted reservation is refunded and its work marked failed. |
 | **IDOR** | Insecure direct object reference. Prevented by scoping every query to the authenticated user. |
